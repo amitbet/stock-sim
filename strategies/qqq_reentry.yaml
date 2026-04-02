@@ -1,0 +1,78 @@
+metadata:
+  name: QQQ re-entry
+  version: "1"
+  symbol_scope: any
+
+reference_price: sell_price
+
+entry_rules:
+  - id: first-entry
+    label: First entry after 2% drop or 3 trading days
+    priority: 10
+    trigger:
+      any_of:
+        - drop_pct_from_reference: 2
+        - trading_days_since_reference: 3
+    action:
+      type: buy_percent
+      buy_percent: 20
+
+  - id: ladder-4
+    label: Add 15% on 4% drawdown
+    trigger:
+      drop_pct_from_reference: 4
+    action:
+      type: buy_percent
+      buy_percent: 15
+
+  - id: ladder-7
+    label: Add 15% on 7% drawdown
+    trigger:
+      drop_pct_from_reference: 7
+    action:
+      type: buy_percent
+      buy_percent: 15
+
+  - id: ladder-11
+    label: Add 15% on 11% drawdown
+    trigger:
+      drop_pct_from_reference: 11
+    action:
+      type: buy_percent
+      buy_percent: 15
+
+  - id: ladder-15
+    label: Add 15% on 15% drawdown
+    trigger:
+      drop_pct_from_reference: 15
+    action:
+      type: buy_percent
+      buy_percent: 15
+
+  - id: ladder-20
+    label: Add 20% on 20% drawdown
+    trigger:
+      drop_pct_from_reference: 20
+    action:
+      type: buy_percent
+      buy_percent: 20
+
+  - id: rebound
+    label: Buy next planned allocation after 4% rebound from low
+    trigger:
+      rise_pct_from_low_since_reference: 4
+    action:
+      type: buy_next_planned_allocation
+
+  - id: strong-recovery
+    label: Invest remaining capital on close above SMA 20 and 50
+    trigger:
+      close_above_sma: [20, 50]
+    action:
+      type: invest_remaining
+
+constraints:
+  max_actions_per_day: 1
+  prevent_duplicate_level_buys: true
+
+exit: {}
