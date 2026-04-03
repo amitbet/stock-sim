@@ -1,18 +1,20 @@
 package httpapi_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"stock-sim/internal/httpapi"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestAPIEndpoints(t *testing.T) {
-	dbPath := locateDBPath(t)
+	dbPath := createTestDB(t)
 	server, err := httpapi.NewServer(httpapi.Config{
 		Addr:       ":0",
 		DBPath:     dbPath,
@@ -60,26 +62,39 @@ func TestAPIEndpoints(t *testing.T) {
 	})
 }
 
-func locateDBPath(t *testing.T) string {
+func createTestDB(t *testing.T) string {
 	t.Helper()
 
-	wd, err := os.Getwd()
+	dbPath := filepath.Join(t.TempDir(), "scanner.sqlite")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dbPath))
 	if err != nil {
-		t.Fatalf("getwd: %v", err)
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	statements := []string{
+		`CREATE TABLE bars_daily (
+			symbol TEXT NOT NULL,
+			date TEXT NOT NULL,
+			open REAL NOT NULL,
+			high REAL NOT NULL,
+			low REAL NOT NULL,
+			close REAL NOT NULL,
+			volume REAL NOT NULL,
+			vwap REAL
+		)`,
+		`INSERT INTO bars_daily (symbol, date, open, high, low, close, volume, vwap) VALUES
+			('QQQ', '2024-01-02', 400, 405, 398, 403, 1000000, 402),
+			('QQQ', '2024-01-03', 403, 406, 401, 404, 1100000, 403.5),
+			('QQQ', '2024-01-04', 404, 408, 402, 407, 1200000, 405.5),
+			('SPY', '2024-01-02', 470, 472, 468, 471, 900000, 470.5)`,
 	}
 
-	candidates := []string{
-		filepath.Join(wd, "..", "..", "stock-scanner", "data", "scanner.sqlite"),
-		filepath.Join(wd, "..", "..", "..", "stock-scanner", "data", "scanner.sqlite"),
-		filepath.Join(wd, "..", "..", "..", "..", "stock-scanner", "data", "scanner.sqlite"),
-	}
-
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed sqlite: %v", err)
 		}
 	}
 
-	t.Fatalf("could not locate scanner sqlite from %s; tried %v", wd, candidates)
-	return ""
+	return dbPath
 }
