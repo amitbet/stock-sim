@@ -2,7 +2,6 @@ package sim
 
 import (
 	"fmt"
-	"slices"
 	"time"
 
 	"stock-sim/internal/data"
@@ -18,9 +17,7 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 		return result, fmt.Errorf("unsupported execution mode %q", mode)
 	}
 
-	referenceIndex := slices.IndexFunc(bars, func(bar data.Bar) bool {
-		return sameDay(bar.Date, referenceSellDate)
-	})
+	referenceIndex := indexBarByDate(bars, referenceSellDate)
 	if referenceIndex < 0 {
 		return result, fmt.Errorf("reference sell date %s not found in bar set", referenceSellDate.Format("2006-01-02"))
 	}
@@ -36,9 +33,7 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 	maxDrawdownPct := 0.0
 
 	sortedRules := append([]plan.EntryRule(nil), strategy.EntryRules...)
-	slices.SortFunc(sortedRules, func(a, b plan.EntryRule) int {
-		return b.Priority - a.Priority
-	})
+	sortRulesByPriority(sortedRules)
 
 	for barIndex := referenceIndex; barIndex < len(bars); barIndex++ {
 		bar := bars[barIndex]
@@ -300,7 +295,7 @@ func determineEndIndex(bars []data.Bar, fullInvestIndex int, referencePrice floa
 	}
 
 	if exitRule.HoldDaysAfterFullInvest != nil && *exitRule.HoldDaysAfterFullInvest > 0 {
-		return min(fullInvestIndex+*exitRule.HoldDaysAfterFullInvest, len(bars)-1)
+		return minInt(fullInvestIndex+*exitRule.HoldDaysAfterFullInvest, len(bars)-1)
 	}
 
 	for index := fullInvestIndex; index < len(bars); index++ {
@@ -310,4 +305,30 @@ func determineEndIndex(bars []data.Bar, fullInvestIndex int, referencePrice floa
 	}
 
 	return len(bars) - 1
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func indexBarByDate(bars []data.Bar, target time.Time) int {
+	for index, bar := range bars {
+		if sameDay(bar.Date, target) {
+			return index
+		}
+	}
+	return -1
+}
+
+func sortRulesByPriority(rules []plan.EntryRule) {
+	for i := 0; i < len(rules); i++ {
+		for j := i + 1; j < len(rules); j++ {
+			if rules[j].Priority > rules[i].Priority {
+				rules[i], rules[j] = rules[j], rules[i]
+			}
+		}
+	}
 }

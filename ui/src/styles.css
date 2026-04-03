@@ -254,6 +254,47 @@ select,
   padding: 12px;
 }
 
+.symbol-combobox {
+  position: relative;
+}
+
+.symbol-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #102038;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  z-index: 30;
+}
+
+.symbol-option {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.symbol-option:hover,
+.symbol-option.active {
+  background: rgba(76, 201, 240, 0.12);
+}
+
+.symbol-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .toggle-row {
   margin: 16px 0;
   gap: 10px;

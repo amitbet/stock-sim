@@ -16,10 +16,18 @@ import (
 )
 
 func main() {
-	defaultDBPath := discoverDefaultDBPath()
+	defaultDBPath, searchRoots, found := discoverDefaultDBPath()
+	dbPath := os.Getenv("SIM_DB_PATH")
+	if dbPath == "" {
+		if !found {
+			log.Fatalf("no sqlite database found. Searched: %s. Put a .sqlite/.sqlite3/.db file next to the binary, in its parent directory, or in a sibling directory, or set SIM_DB_PATH.", strings.Join(searchRoots, ", "))
+		}
+		dbPath = defaultDBPath
+	}
+
 	cfg := httpapi.Config{
 		Addr:       envOrDefault("SIM_ADDR", ":3002"),
-		DBPath:     envOrDefault("SIM_DB_PATH", defaultDBPath),
+		DBPath:     dbPath,
 		UIDistPath: envOrDefault("SIM_UI_DIST", "internal/httpapi/dist"),
 	}
 
@@ -92,10 +100,10 @@ func openBrowser(url string) error {
 	return cmd.Start()
 }
 
-func discoverDefaultDBPath() string {
+func discoverDefaultDBPath() (string, []string, bool) {
 	exePath, err := os.Executable()
 	if err != nil {
-		return "../stock-scanner/data/scanner.sqlite"
+		return "", nil, false
 	}
 
 	binDir := filepath.Dir(exePath)
@@ -114,11 +122,11 @@ func discoverDefaultDBPath() string {
 
 	for _, root := range searchRoots {
 		if path, ok := findSQLiteUnderRoot(root); ok {
-			return path
+			return path, searchRoots, true
 		}
 	}
 
-	return "../stock-scanner/data/scanner.sqlite"
+	return "", searchRoots, false
 }
 
 func findSQLiteUnderRoot(root string) (string, bool) {
@@ -136,11 +144,14 @@ func findSQLiteUnderRoot(root string) (string, bool) {
 		}
 		if isSQLiteFile(path) {
 			found = path
-			return filepath.SkipAll
+			return errStopWalk
 		}
 		return nil
 	})
-	if err != nil || found == "" {
+	if err != nil && err != errStopWalk {
+		return "", false
+	}
+	if found == "" {
 		return "", false
 	}
 	return found, true
@@ -152,3 +163,5 @@ func isSQLiteFile(path string) bool {
 		strings.HasSuffix(lower, ".sqlite3") ||
 		strings.HasSuffix(lower, ".db")
 }
+
+var errStopWalk = fmt.Errorf("stop sqlite discovery")

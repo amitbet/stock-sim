@@ -48,17 +48,29 @@ export default function App() {
 
   useEffect(() => {
     async function bootstrap() {
+      let nextError = "";
+
       try {
-        const [symbolsPayload, planPayload] = await Promise.all([fetchSymbols(), fetchDefaultPlan()]);
+        const planPayload = await fetchDefaultPlan();
+        setPlanText(planPayload.plan || "");
+      } catch (err) {
+        nextError = err.message;
+      }
+
+      try {
+        const symbolsPayload = await fetchSymbols();
         setSymbols(symbolsPayload.symbols || []);
         if (symbolsPayload.symbols?.includes("QQQ")) {
           setSymbol("QQQ");
         } else if (symbolsPayload.symbols?.length) {
           setSymbol(symbolsPayload.symbols[0]);
         }
-        setPlanText(planPayload.plan || "");
       } catch (err) {
-        setError(err.message);
+        nextError = nextError || err.message;
+      }
+
+      if (nextError) {
+        setError(nextError);
       }
     }
     bootstrap();

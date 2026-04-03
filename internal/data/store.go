@@ -3,7 +3,10 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,6 +29,26 @@ type Store struct {
 }
 
 func NewStore(path string) (*Store, error) {
+	if path == "" {
+		return nil, errors.New("sqlite path is required")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("sqlite file not found: %s", path)
+		}
+		return nil, fmt.Errorf("stat sqlite file %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("sqlite path is a directory, not a file: %s", path)
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err == nil {
+		path = absPath
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

@@ -46,7 +46,7 @@ func Validate(p StrategyPlan, availableBars int) ValidationResult {
 			result.Errors = append(result.Errors, fmt.Sprintf("rule %s uses unsupported action type %q", rule.ID, rule.Action.Type))
 		}
 
-		maxSMA = max(maxSMA, maxPeriod(rule.Trigger))
+		maxSMA = maxInt(maxSMA, maxPeriod(rule.Trigger))
 		validateTrigger(rule.ID, rule.Trigger, &result)
 	}
 
@@ -105,4 +105,11 @@ func maxPeriod(trigger Trigger) int {
 		}
 	}
 	return best
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }

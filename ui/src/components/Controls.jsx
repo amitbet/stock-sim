@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from "react";
+
 export default function Controls({
   symbols,
   symbol,
@@ -14,6 +16,38 @@ export default function Controls({
   onRunBatch,
   running
 }) {
+  const [query, setQuery] = useState(symbol);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    setQuery(symbol);
+  }, [symbol]);
+
+  const filteredSymbols = useMemo(() => {
+    const normalized = query.trim().toUpperCase();
+    if (!normalized) {
+      return symbols.slice(0, 50);
+    }
+
+    const startsWith = [];
+    const contains = [];
+    for (const item of symbols) {
+      const upper = item.toUpperCase();
+      if (upper.startsWith(normalized)) {
+        startsWith.push(item);
+      } else if (upper.includes(normalized)) {
+        contains.push(item);
+      }
+    }
+    return [...startsWith, ...contains].slice(0, 50);
+  }, [symbols, query]);
+
+  function selectSymbol(nextSymbol) {
+    setQuery(nextSymbol);
+    setOpen(false);
+    onSymbolChange(nextSymbol);
+  }
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -26,13 +60,44 @@ export default function Controls({
       <div className="form-grid">
         <label>
           Symbol
-          <select value={symbol} onChange={(event) => onSymbolChange(event.target.value)}>
-            {symbols.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
+          <div className="symbol-combobox">
+            <input
+              type="text"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value.toUpperCase());
+                setOpen(true);
+              }}
+              onFocus={() => setOpen(true)}
+              onBlur={() => {
+                window.setTimeout(() => {
+                  setOpen(false);
+                  setQuery(symbol);
+                }, 120);
+              }}
+              placeholder="Search ticker"
+              className="settings-input"
+            />
+            {open ? (
+              <div className="symbol-menu">
+                {filteredSymbols.length > 0 ? (
+                  filteredSymbols.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className={`symbol-option ${item === symbol ? "active" : ""}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectSymbol(item)}
+                    >
+                      {item}
+                    </button>
+                  ))
+                ) : (
+                  <div className="symbol-empty">No matching symbol</div>
+                )}
+              </div>
+            ) : null}
+          </div>
         </label>
 
         <label>
