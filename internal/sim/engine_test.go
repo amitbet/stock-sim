@@ -37,6 +37,85 @@ func TestRunSupportsNextDayOpen(t *testing.T) {
 	}
 }
 
+func TestRunSupportsExactExecutionPrice(t *testing.T) {
+	raw := `metadata:
+  name: Exact execution
+  version: "1"
+  symbol_scope: any
+reference_price: sell_price
+entry_rules:
+  - id: first-entry
+    label: First
+    trigger:
+      drop_pct_from_reference: 2
+    action:
+      type: buy_percent
+      buy_percent: 100
+constraints:
+  max_actions_per_day: 1
+  prevent_duplicate_level_buys: true
+exit:
+  hold_days_after_full_invest: 5
+`
+
+	bars := []data.Bar{
+		makeBar("2024-01-02", 100, 102, 99, 100),
+		makeBar("2024-01-03", 100, 101, 97, 98),
+	}
+
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceExact, sim.ReferencePriceClose, nil)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(result.Actions) != 1 {
+		t.Fatalf("expected one action, got %+v", result.Actions)
+	}
+	if result.Actions[0].Date != "2024-01-03" {
+		t.Fatalf("expected exact execution on trigger date, got %+v", result.Actions[0])
+	}
+	if result.Actions[0].FillPrice != 98 {
+		t.Fatalf("expected exact threshold fill 98.00, got %.4f", result.Actions[0].FillPrice)
+	}
+}
+
+func TestRunSupportsExactExecutionPriceForTimeTrigger(t *testing.T) {
+	raw := `metadata:
+  name: Exact time trigger
+  version: "1"
+  symbol_scope: any
+reference_price: sell_price
+entry_rules:
+  - id: first-entry
+    label: First
+    trigger:
+      trading_days_since_reference: 1
+    action:
+      type: buy_percent
+      buy_percent: 100
+constraints:
+  max_actions_per_day: 1
+  prevent_duplicate_level_buys: true
+exit:
+  hold_days_after_full_invest: 5
+`
+
+	bars := []data.Bar{
+		makeBar("2024-01-02", 100, 101, 99, 100),
+		makeBar("2024-01-03", 101, 102, 100, 101.5),
+	}
+
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceExact, sim.ReferencePriceClose, nil)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(result.Actions) != 1 {
+		t.Fatalf("expected one action, got %+v", result.Actions)
+	}
+	if result.Actions[0].FillPrice != 101.5 {
+		t.Fatalf("expected time trigger to fall back to close 101.50, got %.4f", result.Actions[0].FillPrice)
+	}
+}
+
 func TestRunSupportsAverageOfDay(t *testing.T) {
 	bars := sampleBars()
 	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceAverageOfDay, sim.ReferencePriceClose, nil)

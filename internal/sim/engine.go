@@ -17,6 +17,7 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 		return result, fmt.Errorf("no bars provided")
 	}
 	if mode != ExecutionPriceSameDayClose &&
+		mode != ExecutionPriceExact &&
 		mode != ExecutionPriceNextDayOpen &&
 		mode != ExecutionPriceRandomInDay &&
 		mode != ExecutionPriceAverageOfDay {
@@ -87,7 +88,7 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 				continue
 			}
 
-			fillIndex, fillPrice, ok := resolveExecution(mode, bars, barIndex, rule)
+			fillIndex, fillPrice, ok := resolveExecution(mode, bars, referenceIndex, barIndex, rule, referencePrice, lowestLow)
 			if !ok {
 				continue
 			}
@@ -356,6 +357,8 @@ func sameDay(left, right time.Time) bool {
 
 func explainExecution(rule plan.EntryRule, mode ExecutionPriceMode, triggerDay, fillDay time.Time) string {
 	switch mode {
+	case ExecutionPriceExact:
+		return fmt.Sprintf("%s executed at the exact trigger threshold on %s", rule.ID, triggerDay.Format("2006-01-02"))
 	case ExecutionPriceSameDayClose:
 		return fmt.Sprintf("%s executed on %s close", rule.ID, triggerDay.Format("2006-01-02"))
 	case ExecutionPriceNextDayOpen:
@@ -369,10 +372,16 @@ func explainExecution(rule plan.EntryRule, mode ExecutionPriceMode, triggerDay, 
 	}
 }
 
-func resolveExecution(mode ExecutionPriceMode, bars []data.Bar, barIndex int, rule plan.EntryRule) (int, float64, bool) {
+func resolveExecution(mode ExecutionPriceMode, bars []data.Bar, referenceIndex, barIndex int, rule plan.EntryRule, referencePrice, lowestLow float64) (int, float64, bool) {
 	bar := bars[barIndex]
 
 	switch mode {
+	case ExecutionPriceExact:
+		fillPrice, ok := exactExecutionPrice(rule.Trigger, bars, referenceIndex, barIndex, referencePrice, lowestLow)
+		if !ok {
+			return 0, 0, false
+		}
+		return barIndex, fillPrice, true
 	case ExecutionPriceSameDayClose:
 		return barIndex, bar.Close, true
 	case ExecutionPriceNextDayOpen:
@@ -386,6 +395,42 @@ func resolveExecution(mode ExecutionPriceMode, bars []data.Bar, barIndex int, ru
 		return barIndex, (bar.Open + bar.High + bar.Low + bar.Close) / 4, true
 	default:
 		return 0, 0, false
+	}
+}
+
+func exactExecutionPrice(trigger plan.Trigger, bars []data.Bar, referenceIndex, currentIndex int, referencePrice, lowestLow float64) (float64, bool) {
+	if len(trigger.AnyOf) > 0 {
+		for _, child := range trigger.AnyOf {
+			if triggerMatches(child, bars, referenceIndex, currentIndex, referencePrice, lowestLow) {
+				return exactExecutionPrice(child, bars, referenceIndex, currentIndex, referencePrice, lowestLow)
+			}
+		}
+		return 0, false
+	}
+
+	bar := bars[currentIndex]
+	switch {
+	case trigger.DropPctFromReference != nil:
+		return referencePrice * (1 - (*trigger.DropPctFromReference / 100)), true
+	case trigger.RisePctFromLowSinceRef != nil:
+		return lowestLow * (1 + (*trigger.RisePctFromLowSinceRef / 100)), true
+	case len(trigger.CloseAboveSMA) > 0:
+		maxSMA := 0.0
+		for _, period := range trigger.CloseAboveSMA {
+			value, ok := smaAt(bars, currentIndex, period)
+			if !ok {
+				return 0, false
+			}
+			if value > maxSMA {
+				maxSMA = value
+			}
+		}
+		return maxSMA, true
+	case trigger.TradingDaysSinceReference != nil:
+		// Time-based triggers do not define a threshold price, so use the current close.
+		return bar.Close, true
+	default:
+		return 0, false
 	}
 }
 

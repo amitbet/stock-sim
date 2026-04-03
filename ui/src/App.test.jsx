@@ -99,7 +99,7 @@ describe("App", () => {
       expect(JSON.parse(firstRunCall[1].body)).toMatchObject({
         symbol: "QQQ",
         reference_sell_date: "2024-01-02",
-        execution_price_mode: "same_day_close",
+        execution_price_mode: "exact",
         reference_price_mode: "close",
         reference_price: 101
       });

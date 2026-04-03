@@ -6,6 +6,7 @@ type ExecutionPriceMode string
 type ReferencePriceMode string
 
 const (
+	ExecutionPriceExact        ExecutionPriceMode = "exact"
 	ExecutionPriceSameDayClose ExecutionPriceMode = "same_day_close"
 	ExecutionPriceNextDayOpen  ExecutionPriceMode = "next_day_open"
 	ExecutionPriceRandomInDay  ExecutionPriceMode = "random_in_day"

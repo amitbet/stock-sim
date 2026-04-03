@@ -93,7 +93,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState("");
   const [multiSelectedDates, setMultiSelectedDates] = useState([]);
   const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
-  const [executionMode, setExecutionMode] = useState("same_day_close");
+  const [executionMode, setExecutionMode] = useState("exact");
   const [referencePriceMode, setReferencePriceMode] = useState("close");
   const [referencePrice, setReferencePrice] = useState("");
   const [holdDaysOverride, setHoldDaysOverride] = useState("");

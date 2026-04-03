@@ -110,6 +110,7 @@ export default function Controls({
         <label>
           Execution price
           <select value={executionMode} onChange={(event) => onExecutionModeChange(event.target.value)}>
+            <option value="exact">Exact trigger price</option>
             <option value="same_day_close">Same day close</option>
             <option value="next_day_open">Next day open</option>
             <option value="random_in_day">Random in day</option>
