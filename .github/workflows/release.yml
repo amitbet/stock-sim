@@ -60,7 +60,16 @@ jobs:
         id: next-version
         shell: bash
         run: |
-          latest_tag="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
+          latest_tag="$(
+            git tag -l 'v*' \
+              | sort -V \
+              | while IFS= read -r tag; do
+                  if [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    printf '%s\n' "${tag}"
+                  fi
+                done \
+              | tail -n1
+          )"
 
           if [ -z "${latest_tag}" ]; then
             version="1.0.0"
