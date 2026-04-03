@@ -43,8 +43,40 @@ jobs:
       - name: Run Go tests
         run: go test ./...
 
-  build:
+  version:
     needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next-version.outputs.version }}
+      tag: ${{ steps.next-version.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next release version
+        id: next-version
+        shell: bash
+        run: |
+          latest_tag="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
+
+          if [ -z "${latest_tag}" ]; then
+            version="1.0.0"
+          else
+            current_version="${latest_tag#v}"
+            IFS='.' read -r major minor patch <<< "${current_version}"
+            version="${major}.${minor}.$((patch + 1))"
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs:
+      - verify
+      - version
     runs-on: ubuntu-latest
 
     strategy:
@@ -109,9 +141,9 @@ jobs:
           ARCHIVE_FORMAT: ${{ matrix.archive }}
           TARGET_ID: ${{ matrix.id }}
           BINARY_NAME: ${{ matrix.binary-name }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          PACKAGE_NAME="stock-sim-${TARGET_ID}-${SHORT_SHA}"
+          PACKAGE_NAME="stock-sim-${TARGET_ID}-v${RELEASE_VERSION}"
           STAGE_DIR="release/${PACKAGE_NAME}"
 
           mkdir -p "${STAGE_DIR}/internal/httpapi/dist"
@@ -139,7 +171,9 @@ jobs:
             release/*.tar.gz
 
   release:
-    needs: build
+    needs:
+      - build
+      - version
     runs-on: ubuntu-latest
 
     steps:
@@ -152,13 +186,13 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: commit-${{ github.sha }}
+          tag_name: ${{ needs.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: Commit ${{ github.sha }}
-          prerelease: true
+          name: Release ${{ needs.version.outputs.tag }}
+          make_latest: true
           files: release-artifacts/*
           body: |
-            Automated release for commit `${{ github.sha }}`.
+            Official release `${{ needs.version.outputs.tag }}` for commit `${{ github.sha }}`.
 
             Included artifacts:
             - Windows amd64
