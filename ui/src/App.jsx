@@ -15,6 +15,7 @@ import {
 
 const RANGE_FROM = "2023-01-01";
 const RANGE_TO = "2026-12-31";
+const AUTO_RUN_DEBOUNCE_MS = 350;
 
 function downloadTextFile(filename, content) {
   const blob = new Blob([content], { type: "text/yaml;charset=utf-8" });
@@ -28,6 +29,8 @@ function downloadTextFile(filename, content) {
 
 export default function App() {
   const fileInputRef = useRef(null);
+  const latestSingleRunIdRef = useRef(0);
+  const autoRunKeyRef = useRef("");
   const [symbols, setSymbols] = useState([]);
   const [symbol, setSymbol] = useState("QQQ");
   const [bars, setBars] = useState([]);
@@ -36,7 +39,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState("");
   const [multiSelectedDates, setMultiSelectedDates] = useState([]);
   const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
-  const [executionMode, setExecutionMode] = useState("next_day_open");
+  const [executionMode, setExecutionMode] = useState("same_day_close");
   const [holdDaysOverride, setHoldDaysOverride] = useState("");
   const [singleResult, setSingleResult] = useState(null);
   const [batchResult, setBatchResult] = useState(null);
@@ -125,6 +128,8 @@ export default function App() {
     if (!date) {
       return;
     }
+    const runId = latestSingleRunIdRef.current + 1;
+    latestSingleRunIdRef.current = runId;
     setLoading(true);
     try {
       const payload = await runSimulation({
@@ -134,12 +139,18 @@ export default function App() {
         execution_price_mode: executionMode,
         hold_days_after_full_invest: normalizedHoldDaysOverride()
       });
-      setSingleResult(payload);
-      setError("");
+      if (latestSingleRunIdRef.current === runId) {
+        setSingleResult(payload);
+        setError("");
+      }
     } catch (err) {
-      setError(err.message);
+      if (latestSingleRunIdRef.current === runId) {
+        setError(err.message);
+      }
     } finally {
-      setLoading(false);
+      if (latestSingleRunIdRef.current === runId) {
+        setLoading(false);
+      }
     }
   }
 
@@ -209,6 +220,36 @@ export default function App() {
     });
   }
 
+  useEffect(() => {
+    if (!selectedDate || multiSelectEnabled) {
+      autoRunKeyRef.current = "";
+      return;
+    }
+
+    const autoRunKey = JSON.stringify({
+      selectedDate,
+      planText,
+      executionMode,
+      holdDaysOverride
+    });
+
+    if (!autoRunKeyRef.current) {
+      autoRunKeyRef.current = autoRunKey;
+      return;
+    }
+
+    if (autoRunKeyRef.current === autoRunKey) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      autoRunKeyRef.current = autoRunKey;
+      runSingleForDate(selectedDate);
+    }, AUTO_RUN_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [executionMode, holdDaysOverride, multiSelectEnabled, planText, selectedDate]);
+
   return (
     <div className="app-shell">
       <header className="hero">
@@ -254,36 +295,38 @@ export default function App() {
           />
         </section>
 
-        <div className="side-grid">
-          <Controls
-            symbols={symbols}
-            symbol={symbol}
-            onSymbolChange={setSymbol}
-            executionMode={executionMode}
-            onExecutionModeChange={setExecutionMode}
-            holdDaysOverride={holdDaysOverride}
-            onHoldDaysOverrideChange={setHoldDaysOverride}
-            selectedDate={selectedDate}
-            multiSelectEnabled={multiSelectEnabled}
-            onToggleMultiSelect={handleToggleMultiSelect}
-            selectedBatchCount={selectedBatchCount}
-            onRunSingle={handleRunSingle}
-            onRunBatch={handleRunBatch}
-            running={loading}
-          />
+        <aside className="sidebar-scroll" aria-label="Simulation controls and results">
+          <div className="side-grid">
+            <Controls
+              symbols={symbols}
+              symbol={symbol}
+              onSymbolChange={setSymbol}
+              executionMode={executionMode}
+              onExecutionModeChange={setExecutionMode}
+              holdDaysOverride={holdDaysOverride}
+              onHoldDaysOverrideChange={setHoldDaysOverride}
+              selectedDate={selectedDate}
+              multiSelectEnabled={multiSelectEnabled}
+              onToggleMultiSelect={handleToggleMultiSelect}
+              selectedBatchCount={selectedBatchCount}
+              onRunSingle={handleRunSingle}
+              onRunBatch={handleRunBatch}
+              running={loading}
+            />
 
-          <PlanEditor
-            value={planText}
-            onChange={setPlanText}
-            validation={validation}
-            onValidate={handleValidate}
-            onLoad={handleLoadPlan}
-            onSave={handleSavePlan}
-            validating={validating}
-          />
+            <PlanEditor
+              value={planText}
+              onChange={setPlanText}
+              validation={validation}
+              onValidate={handleValidate}
+              onLoad={handleLoadPlan}
+              onSave={handleSavePlan}
+              validating={validating}
+            />
 
-          <ResultsPanel result={singleResult} />
-        </div>
+            <ResultsPanel result={singleResult} />
+          </div>
+        </aside>
       </div>
 
       <input ref={fileInputRef} hidden type="file" accept=".yaml,.yml,.json,.txt" onChange={handlePlanFile} />

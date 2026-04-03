@@ -4,6 +4,7 @@ export default function BatchReportModal({ open, result, selectedRunIndex, onSel
   }
 
   const run = result.runs[selectedRunIndex] || result.runs[0];
+  const selectedRunActions = run?.actions ?? [];
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -44,7 +45,7 @@ export default function BatchReportModal({ open, result, selectedRunIndex, onSel
                     <td>{item.summary.end_date}</td>
                     <td>{item.summary.gain_pct.toFixed(2)}%</td>
                     <td>{item.summary.execution_mode}</td>
-                    <td>{item.actions.length}</td>
+                    <td>{item.actions?.length ?? 0}</td>
                     <td>{item.summary.total_invested_pct.toFixed(2)}%</td>
                   </tr>
                 ))}
@@ -60,6 +61,10 @@ export default function BatchReportModal({ open, result, selectedRunIndex, onSel
                 <strong>{run.summary.reference_sell_date}</strong>
               </div>
               <div className="summary-item">
+                <span>S Price</span>
+                <strong>{run.summary.reference_price.toFixed(2)}</strong>
+              </div>
+              <div className="summary-item">
                 <span>Gain</span>
                 <strong>{run.summary.gain_pct.toFixed(2)}%</strong>
               </div>
@@ -69,9 +74,9 @@ export default function BatchReportModal({ open, result, selectedRunIndex, onSel
               </div>
             </div>
             <ul className="action-list">
-              {run.actions.map((action) => (
+              {selectedRunActions.map((action) => (
                 <li key={`${action.date}-${action.trigger_id}`}>
-                  <strong>{action.date}</strong> {action.label || action.trigger_id} bought {action.allocation_pct}% at {action.fill_price.toFixed(2)}
+                  <strong>{action.trigger_date}</strong> trigger at {action.trigger_price != null ? action.trigger_price.toFixed(2) : "--"}, <strong>{action.date}</strong> fill: {action.label || action.trigger_id} bought {action.allocation_pct}% at buy price {action.fill_price.toFixed(2)}
                 </li>
               ))}
             </ul>

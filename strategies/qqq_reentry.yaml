@@ -7,12 +7,12 @@ reference_price: sell_price
 
 entry_rules:
   - id: first-entry
-    label: First entry after 2% drop or 3 trading days
+    label: First entry after 2% drop or 10 trading days
     priority: 10
     trigger:
       any_of:
         - drop_pct_from_reference: 2
-        - trading_days_since_reference: 3
+        - trading_days_since_reference: 10
     action:
       type: buy_percent
       buy_percent: 20

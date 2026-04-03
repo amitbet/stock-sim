@@ -24,8 +24,9 @@ body {
     radial-gradient(circle at top right, rgba(255, 183, 3, 0.14), transparent 32%),
     linear-gradient(180deg, #07101c 0%, #091727 48%, #06111e 100%);
   color: var(--text);
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: hidden;
 }
 
 button,
@@ -37,15 +38,14 @@ input {
 
 #root {
   height: 100vh;
-  overflow: hidden;
 }
 
 .app-shell {
   padding: 18px;
   height: 100vh;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .hero {
@@ -114,20 +114,23 @@ input {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(360px, 1fr);
   gap: 20px;
+  align-items: stretch;
   flex: 1;
   min-height: 0;
+}
+
+.sidebar-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
 }
 
 .side-grid {
   display: grid;
   gap: 20px;
-  min-height: 0;
   min-width: 0;
   align-content: start;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding-right: 6px;
-  overscroll-behavior: contain;
 }
 
 .panel {
@@ -140,9 +143,10 @@ input {
 }
 
 .chart-panel {
-  min-height: calc(100vh - 120px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .panel-header {
@@ -175,7 +179,7 @@ input {
 .chart-host {
   width: 100%;
   height: 100%;
-  min-height: 780px;
+  min-height: 720px;
 }
 
 .chart-legend {
@@ -326,6 +330,37 @@ select,
   width: 100%;
   padding: 14px;
   resize: vertical;
+}
+
+@media (max-width: 980px) {
+  body {
+    overflow-y: auto;
+  }
+
+  #root,
+  .app-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .main-grid {
+    grid-template-columns: 1fr;
+    flex: none;
+  }
+
+  .side-grid {
+    min-height: auto;
+  }
+
+  .sidebar-scroll {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .chart-panel {
+    height: auto;
+  }
 }
 
 .validation-box {

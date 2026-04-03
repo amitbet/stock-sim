@@ -105,6 +105,8 @@ export default function Controls({
           <select value={executionMode} onChange={(event) => onExecutionModeChange(event.target.value)}>
             <option value="next_day_open">Next day open</option>
             <option value="same_day_close">Same day close</option>
+            <option value="random_in_day">Random in day</option>
+            <option value="average_of_day">Average of day</option>
           </select>
         </label>
 

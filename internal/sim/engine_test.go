@@ -37,6 +37,42 @@ func TestRunSupportsNextDayOpen(t *testing.T) {
 	}
 }
 
+func TestRunSupportsAverageOfDay(t *testing.T) {
+	bars := sampleBars()
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceAverageOfDay)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(result.Actions) == 0 {
+		t.Fatal("expected actions")
+	}
+	if result.Actions[0].Date != bars[0].Date.Format("2006-01-02") {
+		t.Fatal("expected same-day execution date")
+	}
+
+	expected := (bars[0].Open + bars[0].High + bars[0].Low + bars[0].Close) / 4
+	if result.Actions[0].FillPrice != expected {
+		t.Fatalf("expected average-of-day fill %.4f, got %.4f", expected, result.Actions[0].FillPrice)
+	}
+}
+
+func TestRunSupportsRandomInDay(t *testing.T) {
+	bars := sampleBars()
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceRandomInDay)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(result.Actions) == 0 {
+		t.Fatal("expected actions")
+	}
+	if result.Actions[0].Date != bars[0].Date.Format("2006-01-02") {
+		t.Fatal("expected same-day execution date")
+	}
+	if result.Actions[0].FillPrice < bars[0].Low || result.Actions[0].FillPrice > bars[0].High {
+		t.Fatalf("expected intraday random fill within bar range [%.4f, %.4f], got %.4f", bars[0].Low, bars[0].High, result.Actions[0].FillPrice)
+	}
+}
+
 func TestStrongRecoveryRequiresActualSMACross(t *testing.T) {
 	bars := sampleBars()
 	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceSameDayClose)

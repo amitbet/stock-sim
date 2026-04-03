@@ -11,3 +11,6 @@ ui/dist/
 internal/httpapi/dist/
 coverage/
 ui/coverage/
+__debug_bin1299962297
+.DS_Store
+stock-sim-scanner.sqlite

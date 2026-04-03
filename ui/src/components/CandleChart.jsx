@@ -58,7 +58,7 @@ export default function CandleChart({
         horzLines: { color: "rgba(255,255,255,0.07)" }
       },
       crosshair: {
-        mode: 1
+        mode: 0
       },
       rightPriceScale: {
         scaleMargins: { top: 0.1, bottom: 0.15 }
@@ -116,15 +116,26 @@ export default function CandleChart({
   }, []);
 
   useEffect(() => {
-    if (!seriesRef.current) {
+    if (!seriesRef.current || !chartRef.current) {
       return;
     }
+
     const chartData = toChartData(bars);
     seriesRef.current.setData(chartData);
     maSeriesRef.current.forEach((lineSeries, index) => {
       const movingAverage = MOVING_AVERAGES[index];
       lineSeries.setData(toSMAData(bars, movingAverage.period));
     });
+
+    if (bars.length > 0) {
+      chartRef.current.timeScale().fitContent();
+    }
+  }, [bars]);
+
+  useEffect(() => {
+    if (!markersRef.current) {
+      return;
+    }
 
     const markers = [];
     for (const action of actions || []) {
@@ -167,13 +178,8 @@ export default function CandleChart({
       });
     }
 
-    if (markersRef.current) {
-      markersRef.current.setMarkers(markers);
-    }
-    if (bars.length > 0) {
-      chartRef.current?.timeScale().fitContent();
-    }
-  }, [bars, selectedDate, multiSelectedDates, multiSelectEnabled, actions, endDate]);
+    markersRef.current.setMarkers(markers);
+  }, [selectedDate, multiSelectedDates, multiSelectEnabled, actions, endDate]);
 
   return (
     <div className="chart-shell">

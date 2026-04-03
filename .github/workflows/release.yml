@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21.13"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Run UI tests
+        run: npm test
+        working-directory: ui
+
+      - name: Build UI bundle for embedded assets
+        run: |
+          npm run build
+          mkdir -p ../internal/httpapi/dist
+          rm -rf ../internal/httpapi/dist/*
+          cp -R dist/. ../internal/httpapi/dist/
+        working-directory: ui
+
+      - name: Run Go tests
+        run: go test ./...
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-amd64
+            go-version: "1.21.13"
+            goos: windows
+            goarch: amd64
+            archive: zip
+            binary-name: stock-sim.exe
+          - id: windows7-amd64
+            go-version: "1.20.14"
+            goos: windows
+            goarch: amd64
+            archive: zip
+            binary-name: stock-sim.exe
+          - id: macos-amd64
+            go-version: "1.21.13"
+            goos: darwin
+            goarch: amd64
+            archive: tar.gz
+            binary-name: stock-sim
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Build UI bundle for embedded assets
+        run: |
+          npm run build
+          mkdir -p ../internal/httpapi/dist
+          rm -rf ../internal/httpapi/dist/*
+          cp -R dist/. ../internal/httpapi/dist/
+        working-directory: ui
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p release/bin
+          go build -o "release/bin/${{ matrix.binary-name }}" .
+
+      - name: Package artifact
+        env:
+          ARCHIVE_FORMAT: ${{ matrix.archive }}
+          TARGET_ID: ${{ matrix.id }}
+          BINARY_NAME: ${{ matrix.binary-name }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          PACKAGE_NAME="stock-sim-${TARGET_ID}-${SHORT_SHA}"
+          STAGE_DIR="release/${PACKAGE_NAME}"
+
+          mkdir -p "${STAGE_DIR}/internal/httpapi/dist"
+          mkdir -p "${STAGE_DIR}/strategies"
+
+          cp "release/bin/${BINARY_NAME}" "${STAGE_DIR}/${BINARY_NAME}"
+          cp -R internal/httpapi/dist/. "${STAGE_DIR}/internal/httpapi/dist/"
+          cp strategies/qqq_reentry.yaml "${STAGE_DIR}/strategies/qqq_reentry.yaml"
+
+          if [ "${ARCHIVE_FORMAT}" = "zip" ]; then
+            (
+              cd release
+              zip -r "${PACKAGE_NAME}.zip" "${PACKAGE_NAME}"
+            )
+          else
+            tar -C release -czf "release/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
+          fi
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.id }}
+          path: |
+            release/*.zip
+            release/*.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: commit-${{ github.sha }}
+          target_commitish: ${{ github.sha }}
+          name: Commit ${{ github.sha }}
+          prerelease: true
+          files: release-artifacts/*
+          body: |
+            Automated release for commit `${{ github.sha }}`.
+
+            Included artifacts:
+            - Windows amd64
+            - Windows 7 amd64
+            - macOS amd64

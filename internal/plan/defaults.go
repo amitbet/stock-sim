@@ -11,7 +11,7 @@ entry_rules:
     trigger:
       any_of:
         - drop_pct_from_reference: 2
-        - trading_days_since_reference: 3
+        - trading_days_since_reference: 10
     action:
       type: buy_percent
       buy_percent: 20

@@ -2,6 +2,7 @@ package sim
 
 import (
 	"fmt"
+	"hash/fnv"
 	"time"
 
 	"stock-sim/internal/data"
@@ -9,11 +10,16 @@ import (
 )
 
 func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPlan, mode ExecutionPriceMode) (Result, error) {
-	var result Result
+	result := Result{
+		Actions: []Action{},
+	}
 	if len(bars) == 0 {
 		return result, fmt.Errorf("no bars provided")
 	}
-	if mode != ExecutionPriceSameDayClose && mode != ExecutionPriceNextDayOpen {
+	if mode != ExecutionPriceSameDayClose &&
+		mode != ExecutionPriceNextDayOpen &&
+		mode != ExecutionPriceRandomInDay &&
+		mode != ExecutionPriceAverageOfDay {
 		return result, fmt.Errorf("unsupported execution mode %q", mode)
 	}
 
@@ -69,14 +75,9 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 				continue
 			}
 
-			fillIndex := barIndex
-			fillPrice := bar.Close
-			if mode == ExecutionPriceNextDayOpen {
-				if barIndex+1 >= len(bars) {
-					continue
-				}
-				fillIndex = barIndex + 1
-				fillPrice = bars[fillIndex].Open
+			fillIndex, fillPrice, ok := resolveExecution(mode, bars, barIndex, rule)
+			if !ok {
+				continue
 			}
 
 			executions = append(executions, Execution{
@@ -86,6 +87,9 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 			})
 			result.Actions = append(result.Actions, Action{
 				Date:          bars[fillIndex].Date.Format("2006-01-02"),
+				TriggerDate:   bar.Date.Format("2006-01-02"),
+				TriggerPrice:  triggerPriceForMatch(rule.Trigger, bars, referenceIndex, barIndex, referencePrice, lowestLow),
+				TriggerReason: triggerReasonForMatch(rule.Trigger, bars, referenceIndex, barIndex, referencePrice, lowestLow),
 				TriggerID:     rule.ID,
 				Label:         rule.Label,
 				ActionType:    rule.Action.Type,
@@ -129,6 +133,7 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 
 	result.Summary = Summary{
 		ReferenceSellDate: referenceSellDate.Format("2006-01-02"),
+		ReferencePrice:    referencePrice,
 		EndDate:           bars[endIndex].Date.Format("2006-01-02"),
 		GainPct:           gainPct,
 		TotalInvestedPct:  totalInvestedPct,
@@ -221,6 +226,55 @@ func triggerMatches(trigger plan.Trigger, bars []data.Bar, referenceIndex, curre
 	return ok
 }
 
+func triggerPriceForMatch(trigger plan.Trigger, bars []data.Bar, referenceIndex, currentIndex int, referencePrice, lowestLow float64) *float64 {
+	if len(trigger.AnyOf) > 0 {
+		for _, child := range trigger.AnyOf {
+			if triggerMatches(child, bars, referenceIndex, currentIndex, referencePrice, lowestLow) {
+				return triggerPriceForMatch(child, bars, referenceIndex, currentIndex, referencePrice, lowestLow)
+			}
+		}
+		return nil
+	}
+
+	bar := bars[currentIndex]
+	switch {
+	case trigger.DropPctFromReference != nil:
+		return float64Ptr(bar.Low)
+	case trigger.RisePctFromLowSinceRef != nil:
+		return float64Ptr(bar.Close)
+	case len(trigger.CloseAboveSMA) > 0:
+		return float64Ptr(bar.Close)
+	case trigger.TradingDaysSinceReference != nil:
+		return nil
+	default:
+		return nil
+	}
+}
+
+func triggerReasonForMatch(trigger plan.Trigger, bars []data.Bar, referenceIndex, currentIndex int, referencePrice, lowestLow float64) string {
+	if len(trigger.AnyOf) > 0 {
+		for _, child := range trigger.AnyOf {
+			if triggerMatches(child, bars, referenceIndex, currentIndex, referencePrice, lowestLow) {
+				return triggerReasonForMatch(child, bars, referenceIndex, currentIndex, referencePrice, lowestLow)
+			}
+		}
+		return "matched any_of"
+	}
+
+	switch {
+	case trigger.DropPctFromReference != nil:
+		return fmt.Sprintf("drop %.2f%% from S", *trigger.DropPctFromReference)
+	case trigger.TradingDaysSinceReference != nil:
+		return fmt.Sprintf("%d trading days since S", *trigger.TradingDaysSinceReference)
+	case trigger.RisePctFromLowSinceRef != nil:
+		return fmt.Sprintf("rise %.2f%% from low since S", *trigger.RisePctFromLowSinceRef)
+	case len(trigger.CloseAboveSMA) > 0:
+		return fmt.Sprintf("close above SMA %v", trigger.CloseAboveSMA)
+	default:
+		return "rule trigger"
+	}
+}
+
 func crossedAboveAllSMAs(bars []data.Bar, currentIndex int, periods []int) (bool, bool) {
 	if currentIndex <= 0 {
 		return false, false
@@ -276,10 +330,52 @@ func sameDay(left, right time.Time) bool {
 }
 
 func explainExecution(rule plan.EntryRule, mode ExecutionPriceMode, triggerDay, fillDay time.Time) string {
-	if mode == ExecutionPriceSameDayClose {
+	switch mode {
+	case ExecutionPriceSameDayClose:
 		return fmt.Sprintf("%s executed on %s close", rule.ID, triggerDay.Format("2006-01-02"))
+	case ExecutionPriceNextDayOpen:
+		return fmt.Sprintf("%s triggered on %s and filled on next open %s", rule.ID, triggerDay.Format("2006-01-02"), fillDay.Format("2006-01-02"))
+	case ExecutionPriceRandomInDay:
+		return fmt.Sprintf("%s executed at a simulated intraday price on %s", rule.ID, triggerDay.Format("2006-01-02"))
+	case ExecutionPriceAverageOfDay:
+		return fmt.Sprintf("%s executed at the OHLC average on %s", rule.ID, triggerDay.Format("2006-01-02"))
+	default:
+		return fmt.Sprintf("%s executed on %s", rule.ID, fillDay.Format("2006-01-02"))
 	}
-	return fmt.Sprintf("%s triggered on %s and filled on next open %s", rule.ID, triggerDay.Format("2006-01-02"), fillDay.Format("2006-01-02"))
+}
+
+func resolveExecution(mode ExecutionPriceMode, bars []data.Bar, barIndex int, rule plan.EntryRule) (int, float64, bool) {
+	bar := bars[barIndex]
+
+	switch mode {
+	case ExecutionPriceSameDayClose:
+		return barIndex, bar.Close, true
+	case ExecutionPriceNextDayOpen:
+		if barIndex+1 >= len(bars) {
+			return 0, 0, false
+		}
+		return barIndex + 1, bars[barIndex+1].Open, true
+	case ExecutionPriceRandomInDay:
+		return barIndex, intradayRandomPrice(bar, rule.ID), true
+	case ExecutionPriceAverageOfDay:
+		return barIndex, (bar.Open + bar.High + bar.Low + bar.Close) / 4, true
+	default:
+		return 0, 0, false
+	}
+}
+
+func intradayRandomPrice(bar data.Bar, ruleID string) float64 {
+	if bar.High <= bar.Low {
+		return bar.Close
+	}
+
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(bar.Date.Format("2006-01-02")))
+	_, _ = hasher.Write([]byte(":"))
+	_, _ = hasher.Write([]byte(ruleID))
+
+	fraction := float64(hasher.Sum64()%1000000) / 1000000.0
+	return bar.Low + ((bar.High - bar.Low) * fraction)
 }
 
 func minFloat(left, right float64) float64 {
@@ -287,6 +383,10 @@ func minFloat(left, right float64) float64 {
 		return left
 	}
 	return right
+}
+
+func float64Ptr(value float64) *float64 {
+	return &value
 }
 
 func determineEndIndex(bars []data.Bar, fullInvestIndex int, referencePrice float64, exitRule plan.ExitRule) int {

@@ -7,10 +7,15 @@ type ExecutionPriceMode string
 const (
 	ExecutionPriceSameDayClose ExecutionPriceMode = "same_day_close"
 	ExecutionPriceNextDayOpen  ExecutionPriceMode = "next_day_open"
+	ExecutionPriceRandomInDay  ExecutionPriceMode = "random_in_day"
+	ExecutionPriceAverageOfDay ExecutionPriceMode = "average_of_day"
 )
 
 type Action struct {
 	Date          string  `json:"date"`
+	TriggerDate   string  `json:"trigger_date"`
+	TriggerPrice  *float64 `json:"trigger_price,omitempty"`
+	TriggerReason string  `json:"trigger_reason"`
 	TriggerID     string  `json:"trigger_id"`
 	Label         string  `json:"label"`
 	ActionType    string  `json:"action_type"`
@@ -21,6 +26,7 @@ type Action struct {
 
 type Summary struct {
 	ReferenceSellDate string             `json:"reference_sell_date"`
+	ReferencePrice    float64            `json:"reference_price"`
 	FullInvestDate    string             `json:"full_invest_date,omitempty"`
 	EndDate           string             `json:"end_date"`
 	GainPct           float64            `json:"gain_pct"`

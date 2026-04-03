@@ -8,6 +8,8 @@ function summaryItem(label, value) {
 }
 
 export default function ResultsPanel({ result }) {
+  const actions = result?.actions ?? [];
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -21,6 +23,7 @@ export default function ResultsPanel({ result }) {
         <>
           <div className="summary-grid">
             {summaryItem("Reference", result.summary.reference_sell_date)}
+            {summaryItem("S Price", result.summary.reference_price.toFixed(2))}
             {summaryItem("Full Invest", result.summary.full_invest_date || "Not reached")}
             {summaryItem("End Date", result.summary.end_date)}
             {summaryItem("Gain %", `${result.summary.gain_pct.toFixed(2)}%`)}
@@ -32,20 +35,24 @@ export default function ResultsPanel({ result }) {
             <table className="ledger-table">
               <thead>
                 <tr>
+                  <th>Trigger Date</th>
+                  <th>Trigger Price</th>
                   <th>Date</th>
                   <th>Rule</th>
-                  <th>Action</th>
+                  <th>Trigger Reason</th>
                   <th>Allocation</th>
-                  <th>Fill</th>
+                  <th>Buy Price</th>
                   <th>Notes</th>
                 </tr>
               </thead>
               <tbody>
-                {result.actions.map((action) => (
+                {actions.map((action) => (
                   <tr key={`${action.date}-${action.trigger_id}`}>
+                    <td>{action.trigger_date}</td>
+                    <td>{action.trigger_price != null ? action.trigger_price.toFixed(2) : "--"}</td>
                     <td>{action.date}</td>
                     <td>{action.label || action.trigger_id}</td>
-                    <td>{action.action_type}</td>
+                    <td>{action.trigger_reason}</td>
                     <td>{action.allocation_pct}%</td>
                     <td>{action.fill_price.toFixed(2)}</td>
                     <td>{action.notes}</td>
