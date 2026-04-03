@@ -122,7 +122,12 @@ input {
   display: grid;
   gap: 20px;
   min-height: 0;
-  overflow: hidden;
+  min-width: 0;
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 6px;
+  overscroll-behavior: contain;
 }
 
 .panel {
@@ -143,6 +148,8 @@ input {
 .panel-header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -205,6 +212,7 @@ input {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .primary-button,
@@ -312,7 +320,9 @@ select,
 }
 
 .plan-editor {
+  display: block;
   min-height: 320px;
+  max-width: 100%;
   width: 100%;
   padding: 14px;
   resize: vertical;
@@ -366,9 +376,15 @@ select,
 }
 
 .ledger-table {
+  min-width: 760px;
   width: 100%;
   border-collapse: collapse;
   overflow: hidden;
+}
+
+.table-scroll {
+  min-width: 0;
+  overflow: auto;
 }
 
 .ledger-table th,
@@ -472,6 +488,11 @@ select,
 
   .chart-host {
     min-height: 540px;
+  }
+
+  .side-grid {
+    overflow: visible;
+    padding-right: 0;
   }
 }
 

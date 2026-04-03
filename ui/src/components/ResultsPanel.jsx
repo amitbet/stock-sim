@@ -28,30 +28,32 @@ export default function ResultsPanel({ result }) {
             {summaryItem("Max Drawdown", `${result.stats.max_drawdown_pct.toFixed(2)}%`)}
           </div>
 
-          <table className="ledger-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Rule</th>
-                <th>Action</th>
-                <th>Allocation</th>
-                <th>Fill</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.actions.map((action) => (
-                <tr key={`${action.date}-${action.trigger_id}`}>
-                  <td>{action.date}</td>
-                  <td>{action.label || action.trigger_id}</td>
-                  <td>{action.action_type}</td>
-                  <td>{action.allocation_pct}%</td>
-                  <td>{action.fill_price.toFixed(2)}</td>
-                  <td>{action.notes}</td>
+          <div className="table-scroll">
+            <table className="ledger-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Rule</th>
+                  <th>Action</th>
+                  <th>Allocation</th>
+                  <th>Fill</th>
+                  <th>Notes</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {result.actions.map((action) => (
+                  <tr key={`${action.date}-${action.trigger_id}`}>
+                    <td>{action.date}</td>
+                    <td>{action.label || action.trigger_id}</td>
+                    <td>{action.action_type}</td>
+                    <td>{action.allocation_pct}%</td>
+                    <td>{action.fill_price.toFixed(2)}</td>
+                    <td>{action.notes}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       ) : (
         <div className="empty-state">Run a simulation to see the result summary and trade ledger here.</div>
