@@ -13,6 +13,10 @@ const MOVING_AVERAGES = [
   { period: 150, color: "#a78bfa", title: "SMA 150" }
 ];
 
+function compareMarkerTimes(left, right) {
+  return String(left.time).localeCompare(String(right.time));
+}
+
 function markerActionText(actions, date) {
   const matches = actions.filter((item) => item.date === date);
   if (matches.length === 0) {
@@ -178,6 +182,7 @@ export default function CandleChart({
       });
     }
 
+    markers.sort(compareMarkerTimes);
     markersRef.current.setMarkers(markers);
   }, [selectedDate, multiSelectedDates, multiSelectEnabled, actions, endDate]);
 

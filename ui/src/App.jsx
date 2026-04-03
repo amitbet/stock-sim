@@ -49,6 +49,28 @@ function parseReferencePrice(value) {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+function referencePriceValidation(bar, value) {
+  if (!bar) {
+    return "";
+  }
+
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const parsed = Number.parseFloat(trimmed);
+  if (Number.isNaN(parsed)) {
+    return "S price override must be a number.";
+  }
+
+  if (parsed < bar.low || parsed > bar.high) {
+    return `S price override must stay within the selected candle range (${bar.low} to ${bar.high}).`;
+  }
+
+  return "";
+}
+
 function downloadTextFile(filename, content) {
   const blob = new Blob([content], { type: "text/yaml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -134,6 +156,12 @@ export default function App() {
   }, [symbol]);
 
   const selectedBatchCount = multiSelectedDates.length;
+  const selectedBar = useMemo(() => findBarForDate(bars, selectedDate), [bars, selectedDate]);
+  const referencePriceError = useMemo(
+    () => referencePriceValidation(selectedBar, referencePrice),
+    [referencePrice, selectedBar]
+  );
+  const canRunSingle = Boolean(selectedDate) && !referencePriceError;
 
   const actionOverlay = useMemo(() => singleResult?.actions || [], [singleResult]);
   const endDate = singleResult?.summary?.end_date || "";
@@ -196,6 +224,9 @@ export default function App() {
   }
 
   async function handleRunSingle() {
+    if (referencePriceError) {
+      return;
+    }
     return runSingleForDate(selectedDate);
   }
 
@@ -234,6 +265,7 @@ export default function App() {
     setSelectedDate(date);
     const nextReferencePrice = referencePriceFromBar(findBarForDate(bars, date), referencePriceMode);
     setReferencePrice(nextReferencePrice);
+    setError("");
     setSingleResult(null);
     runSingleForDate(date, parseReferencePrice(nextReferencePrice));
   }
@@ -278,6 +310,10 @@ export default function App() {
       return;
     }
 
+    if (referencePriceError) {
+      return;
+    }
+
     const autoRunKey = JSON.stringify({
       selectedDate,
       planText,
@@ -302,7 +338,7 @@ export default function App() {
     }, AUTO_RUN_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [executionMode, holdDaysOverride, multiSelectEnabled, planText, referencePrice, referencePriceMode, selectedDate]);
+  }, [executionMode, holdDaysOverride, multiSelectEnabled, planText, referencePrice, referencePriceError, referencePriceMode, selectedDate]);
 
   return (
     <div className="app-shell">
@@ -355,20 +391,23 @@ export default function App() {
               symbols={symbols}
               symbol={symbol}
               onSymbolChange={setSymbol}
-            executionMode={executionMode}
-            onExecutionModeChange={setExecutionMode}
-            referencePriceMode={referencePriceMode}
-            onReferencePriceModeChange={setReferencePriceMode}
-            referencePrice={referencePrice}
-            onReferencePriceChange={setReferencePrice}
-            holdDaysOverride={holdDaysOverride}
-            onHoldDaysOverrideChange={setHoldDaysOverride}
+              executionMode={executionMode}
+              onExecutionModeChange={setExecutionMode}
+              referencePriceMode={referencePriceMode}
+              onReferencePriceModeChange={setReferencePriceMode}
+              referencePrice={referencePrice}
+              onReferencePriceChange={setReferencePrice}
+              referencePriceError={referencePriceError}
+              selectedBar={selectedBar}
+              holdDaysOverride={holdDaysOverride}
+              onHoldDaysOverrideChange={setHoldDaysOverride}
               selectedDate={selectedDate}
               multiSelectEnabled={multiSelectEnabled}
               onToggleMultiSelect={handleToggleMultiSelect}
               selectedBatchCount={selectedBatchCount}
               onRunSingle={handleRunSingle}
               onRunBatch={handleRunBatch}
+              canRunSingle={canRunSingle}
               running={loading}
             />
 

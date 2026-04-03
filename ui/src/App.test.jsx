@@ -134,7 +134,7 @@ describe("App", () => {
 
     fireEvent.click(screen.getByText("Select 2024-01-02"));
 
-    const sPriceInput = screen.getByLabelText("S price override");
+    const sPriceInput = screen.getByLabelText(/S price override/i);
     expect(sPriceInput).toHaveValue(101);
 
     fireEvent.change(screen.getByLabelText("Default S price"), {
@@ -142,19 +142,48 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByLabelText("S price override")).toHaveValue(102);
+      expect(screen.getByLabelText(/S price override/i)).toHaveValue(102);
     });
 
-    fireEvent.change(screen.getByLabelText("S price override"), {
+    fireEvent.change(screen.getByLabelText(/S price override/i), {
       target: { value: "150.25" }
     });
-    expect(screen.getByLabelText("S price override")).toHaveValue(150.25);
+    expect(screen.getByLabelText(/S price override/i)).toHaveValue(150.25);
 
     fireEvent.click(screen.getByText("Select 2024-01-02"));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("S price override")).toHaveValue(102);
+      expect(screen.getByLabelText(/S price override/i)).toHaveValue(102);
     });
+  });
+
+  it("validates S price override against the selected candle range", async () => {
+    enqueueResponse("/api/simulations/run", singleRunResponse());
+
+    render(<App />);
+
+    await screen.findByText("Stock Simulator");
+    await waitForBarsLoaded();
+
+    fireEvent.click(screen.getByText("Select 2024-01-02"));
+
+    await waitFor(() => {
+      const runCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/simulations/run");
+      expect(runCalls).toHaveLength(1);
+    });
+
+    fireEvent.change(screen.getByLabelText(/S price override/i), {
+      target: { value: "150.25" }
+    });
+
+    expect(screen.getByText(/S price override must stay within the selected candle range/)).toBeInTheDocument();
+    expect(screen.getByText(/Day range: 98 to 102/)).toBeInTheDocument();
+    expect(screen.getByText("Run Selected Date")).toBeDisabled();
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const runCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/simulations/run");
+    expect(runCalls).toHaveLength(1);
   });
 
   it("handles runs that return null actions", async () => {

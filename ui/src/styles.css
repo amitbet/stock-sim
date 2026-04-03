@@ -323,6 +323,16 @@ select,
   font-size: 14px;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.field-hint.error {
+  color: var(--danger);
+}
+
 .plan-editor {
   display: block;
   min-height: 320px;

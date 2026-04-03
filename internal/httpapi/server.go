@@ -252,8 +252,34 @@ func (h *apiHandler) executeOneWithHoldOverride(ctx context.Context, symbol, ref
 	if err != nil {
 		return result, err
 	}
+	if err := validateReferencePriceOverride(bars, refDate, referencePriceOverride); err != nil {
+		return result, err
+	}
 
 	return sim.Run(bars, refDate, parsed, mode, referencePriceMode, referencePriceOverride)
+}
+
+func validateReferencePriceOverride(bars []data.Bar, refDate time.Time, referencePriceOverride *float64) error {
+	if referencePriceOverride == nil {
+		return nil
+	}
+
+	for _, bar := range bars {
+		if bar.Date.Format("2006-01-02") != refDate.Format("2006-01-02") {
+			continue
+		}
+		if *referencePriceOverride < bar.Low || *referencePriceOverride > bar.High {
+			return fmt.Errorf(
+				"reference_price %.2f must be within the selected candle range %.2f to %.2f",
+				*referencePriceOverride,
+				bar.Low,
+				bar.High,
+			)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("reference sell date %s not found in bar set", refDate.Format("2006-01-02"))
 }
 
 func (h *apiHandler) parseAndValidate(ctx context.Context, symbol, rawPlan string) (plan.StrategyPlan, plan.ValidationResult, error) {

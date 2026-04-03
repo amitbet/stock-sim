@@ -10,6 +10,8 @@ export default function Controls({
   onReferencePriceModeChange,
   referencePrice,
   onReferencePriceChange,
+  referencePriceError,
+  selectedBar,
   holdDaysOverride,
   onHoldDaysOverrideChange,
   selectedDate,
@@ -18,6 +20,7 @@ export default function Controls({
   selectedBatchCount,
   onRunSingle,
   onRunBatch,
+  canRunSingle,
   running
 }) {
   const [query, setQuery] = useState(symbol);
@@ -129,12 +132,21 @@ export default function Controls({
           <input
             type="number"
             step="0.01"
+            min={selectedBar ? selectedBar.low : undefined}
+            max={selectedBar ? selectedBar.high : undefined}
             value={referencePrice}
             onChange={(event) => onReferencePriceChange(event.target.value)}
             placeholder={selectedDate ? "Selected date price" : "Pick a reference candle"}
             className="settings-input"
+            aria-invalid={referencePriceError ? "true" : "false"}
             disabled={!selectedDate || multiSelectEnabled}
           />
+          {selectedBar ? (
+            <span className={`field-hint ${referencePriceError ? "error" : ""}`}>
+              Day range: {selectedBar.low} to {selectedBar.high}
+              {referencePriceError ? ` · ${referencePriceError}` : ""}
+            </span>
+          ) : null}
         </label>
 
         <label>
@@ -166,7 +178,7 @@ export default function Controls({
       </div>
 
       <div className="button-row">
-        <button type="button" className="primary-button" onClick={onRunSingle} disabled={!selectedDate || running}>
+        <button type="button" className="primary-button" onClick={onRunSingle} disabled={!canRunSingle || running}>
           {running ? "Running..." : "Run Selected Date"}
         </button>
         <button type="button" className="ghost-button" onClick={onRunBatch} disabled={selectedBatchCount === 0 || running}>
