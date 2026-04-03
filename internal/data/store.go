@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,13 +50,20 @@ func NewStore(path string) (*Store, error) {
 		path = absPath
 	}
 
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+	dsnPath := filepath.ToSlash(path)
+	if filepath.VolumeName(path) != "" && !strings.HasPrefix(dsnPath, "/") {
+		dsnPath = "/" + dsnPath
 	}
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
-		return nil, fmt.Errorf("set wal mode: %w", err)
+	dsn := url.URL{
+		Scheme:   "file",
+		Path:     dsnPath,
+		RawQuery: "mode=ro",
+	}
+
+	db, err := sql.Open("sqlite", dsn.String())
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
 	return &Store{db: db}, nil
