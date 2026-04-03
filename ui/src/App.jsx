@@ -17,6 +17,38 @@ const RANGE_FROM = "2023-01-01";
 const RANGE_TO = "2026-12-31";
 const AUTO_RUN_DEBOUNCE_MS = 350;
 
+function normalizeBarDate(value) {
+  return value ? String(value).slice(0, 10) : "";
+}
+
+function findBarForDate(bars, date) {
+  return bars.find((bar) => normalizeBarDate(bar.date) === date) || null;
+}
+
+function referencePriceFromBar(bar, source) {
+  if (!bar) {
+    return "";
+  }
+  switch (source) {
+    case "open":
+      return String(bar.open);
+    case "high":
+      return String(bar.high);
+    case "low":
+      return String(bar.low);
+    default:
+      return String(bar.close);
+  }
+}
+
+function parseReferencePrice(value) {
+  if (String(value ?? "").trim() === "") {
+    return undefined;
+  }
+  const parsed = Number.parseFloat(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
 function downloadTextFile(filename, content) {
   const blob = new Blob([content], { type: "text/yaml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -40,6 +72,8 @@ export default function App() {
   const [multiSelectedDates, setMultiSelectedDates] = useState([]);
   const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
   const [executionMode, setExecutionMode] = useState("same_day_close");
+  const [referencePriceMode, setReferencePriceMode] = useState("close");
+  const [referencePrice, setReferencePrice] = useState("");
   const [holdDaysOverride, setHoldDaysOverride] = useState("");
   const [singleResult, setSingleResult] = useState(null);
   const [batchResult, setBatchResult] = useState(null);
@@ -89,6 +123,7 @@ export default function App() {
         const payload = await fetchBars(symbol, RANGE_FROM, RANGE_TO);
         setBars(payload.bars || []);
         setSelectedDate("");
+        setReferencePrice("");
         setMultiSelectedDates([]);
         setSingleResult(null);
       } catch (err) {
@@ -124,7 +159,11 @@ export default function App() {
     return Number.isNaN(parsed) ? undefined : parsed;
   }
 
-  async function runSingleForDate(date) {
+  function normalizedReferencePrice() {
+    return parseReferencePrice(referencePrice);
+  }
+
+  async function runSingleForDate(date, referencePriceValue = normalizedReferencePrice()) {
     if (!date) {
       return;
     }
@@ -137,6 +176,8 @@ export default function App() {
         reference_sell_date: date,
         plan: planText,
         execution_price_mode: executionMode,
+        reference_price_mode: referencePriceMode,
+        reference_price: referencePriceValue,
         hold_days_after_full_invest: normalizedHoldDaysOverride()
       });
       if (latestSingleRunIdRef.current === runId) {
@@ -169,6 +210,7 @@ export default function App() {
         reference_sell_dates: multiSelectedDates,
         plan: planText,
         execution_price_mode: executionMode,
+        reference_price_mode: referencePriceMode,
         hold_days_after_full_invest: normalizedHoldDaysOverride()
       });
       setBatchResult(payload);
@@ -190,8 +232,10 @@ export default function App() {
       return;
     }
     setSelectedDate(date);
+    const nextReferencePrice = referencePriceFromBar(findBarForDate(bars, date), referencePriceMode);
+    setReferencePrice(nextReferencePrice);
     setSingleResult(null);
-    runSingleForDate(date);
+    runSingleForDate(date, parseReferencePrice(nextReferencePrice));
   }
 
   function handleToggleMultiSelect(nextValue) {
@@ -222,6 +266,14 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedDate || multiSelectEnabled) {
+      return;
+    }
+
+    setReferencePrice(referencePriceFromBar(findBarForDate(bars, selectedDate), referencePriceMode));
+  }, [bars, multiSelectEnabled, referencePriceMode, selectedDate]);
+
+  useEffect(() => {
+    if (!selectedDate || multiSelectEnabled) {
       autoRunKeyRef.current = "";
       return;
     }
@@ -230,6 +282,8 @@ export default function App() {
       selectedDate,
       planText,
       executionMode,
+      referencePriceMode,
+      referencePrice,
       holdDaysOverride
     });
 
@@ -248,7 +302,7 @@ export default function App() {
     }, AUTO_RUN_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [executionMode, holdDaysOverride, multiSelectEnabled, planText, selectedDate]);
+  }, [executionMode, holdDaysOverride, multiSelectEnabled, planText, referencePrice, referencePriceMode, selectedDate]);
 
   return (
     <div className="app-shell">
@@ -301,10 +355,14 @@ export default function App() {
               symbols={symbols}
               symbol={symbol}
               onSymbolChange={setSymbol}
-              executionMode={executionMode}
-              onExecutionModeChange={setExecutionMode}
-              holdDaysOverride={holdDaysOverride}
-              onHoldDaysOverrideChange={setHoldDaysOverride}
+            executionMode={executionMode}
+            onExecutionModeChange={setExecutionMode}
+            referencePriceMode={referencePriceMode}
+            onReferencePriceModeChange={setReferencePriceMode}
+            referencePrice={referencePrice}
+            onReferencePriceChange={setReferencePrice}
+            holdDaysOverride={holdDaysOverride}
+            onHoldDaysOverrideChange={setHoldDaysOverride}
               selectedDate={selectedDate}
               multiSelectEnabled={multiSelectEnabled}
               onToggleMultiSelect={handleToggleMultiSelect}

@@ -9,7 +9,7 @@ import (
 	"stock-sim/internal/plan"
 )
 
-func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPlan, mode ExecutionPriceMode) (Result, error) {
+func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPlan, mode ExecutionPriceMode, referencePriceMode ReferencePriceMode, referencePriceOverride *float64) (Result, error) {
 	result := Result{
 		Actions: []Action{},
 	}
@@ -22,13 +22,25 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 		mode != ExecutionPriceAverageOfDay {
 		return result, fmt.Errorf("unsupported execution mode %q", mode)
 	}
+	if referencePriceMode == "" {
+		referencePriceMode = ReferencePriceClose
+	}
+	if referencePriceMode != ReferencePriceClose &&
+		referencePriceMode != ReferencePriceOpen &&
+		referencePriceMode != ReferencePriceHigh &&
+		referencePriceMode != ReferencePriceLow {
+		return result, fmt.Errorf("unsupported reference price mode %q", referencePriceMode)
+	}
 
 	referenceIndex := indexBarByDate(bars, referenceSellDate)
 	if referenceIndex < 0 {
 		return result, fmt.Errorf("reference sell date %s not found in bar set", referenceSellDate.Format("2006-01-02"))
 	}
 
-	referencePrice := bars[referenceIndex].Close
+	referencePrice := referencePriceForBar(bars[referenceIndex], referencePriceMode)
+	if referencePriceOverride != nil {
+		referencePrice = *referencePriceOverride
+	}
 	executedRules := map[string]bool{}
 	var executions []Execution
 	plannedBuys, plannedRuleIDs := fixedAllocations(strategy)
@@ -147,6 +159,19 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 	result.Stats.MaxDrawdownPct = maxDrawdownPct
 
 	return result, nil
+}
+
+func referencePriceForBar(bar data.Bar, mode ReferencePriceMode) float64 {
+	switch mode {
+	case ReferencePriceOpen:
+		return bar.Open
+	case ReferencePriceHigh:
+		return bar.High
+	case ReferencePriceLow:
+		return bar.Low
+	default:
+		return bar.Close
+	}
 }
 
 func fixedAllocations(strategy plan.StrategyPlan) ([]float64, []string) {

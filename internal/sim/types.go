@@ -3,12 +3,18 @@ package sim
 import "time"
 
 type ExecutionPriceMode string
+type ReferencePriceMode string
 
 const (
 	ExecutionPriceSameDayClose ExecutionPriceMode = "same_day_close"
 	ExecutionPriceNextDayOpen  ExecutionPriceMode = "next_day_open"
 	ExecutionPriceRandomInDay  ExecutionPriceMode = "random_in_day"
 	ExecutionPriceAverageOfDay ExecutionPriceMode = "average_of_day"
+
+	ReferencePriceClose ReferencePriceMode = "close"
+	ReferencePriceOpen  ReferencePriceMode = "open"
+	ReferencePriceHigh  ReferencePriceMode = "high"
+	ReferencePriceLow   ReferencePriceMode = "low"
 )
 
 type Action struct {

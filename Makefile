@@ -42,4 +42,4 @@ test-ui:
 	cd $(UI_DIR) && $(NPM) run test
 
 clean:
-	rm -rf $(BIN_DIR) $(UI_DIR)/node_modules $(UI_DIR)/dist
+	rm -rf $(BIN_DIR) $(UI_DIR)/node_modules internal/httpapi/dist

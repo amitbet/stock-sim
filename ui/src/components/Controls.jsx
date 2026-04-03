@@ -6,6 +6,10 @@ export default function Controls({
   onSymbolChange,
   executionMode,
   onExecutionModeChange,
+  referencePriceMode,
+  onReferencePriceModeChange,
+  referencePrice,
+  onReferencePriceChange,
   holdDaysOverride,
   onHoldDaysOverrideChange,
   selectedDate,
@@ -103,11 +107,34 @@ export default function Controls({
         <label>
           Execution price
           <select value={executionMode} onChange={(event) => onExecutionModeChange(event.target.value)}>
-            <option value="next_day_open">Next day open</option>
             <option value="same_day_close">Same day close</option>
+            <option value="next_day_open">Next day open</option>
             <option value="random_in_day">Random in day</option>
             <option value="average_of_day">Average of day</option>
           </select>
+        </label>
+
+        <label>
+          Default S price
+          <select value={referencePriceMode} onChange={(event) => onReferencePriceModeChange(event.target.value)}>
+            <option value="close">Close</option>
+            <option value="open">Open</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+
+        <label>
+          S price override
+          <input
+            type="number"
+            step="0.01"
+            value={referencePrice}
+            onChange={(event) => onReferencePriceChange(event.target.value)}
+            placeholder={selectedDate ? "Selected date price" : "Pick a reference candle"}
+            className="settings-input"
+            disabled={!selectedDate || multiSelectEnabled}
+          />
         </label>
 
         <label>

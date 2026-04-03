@@ -38,9 +38,6 @@ jobs:
       - name: Build UI bundle for embedded assets
         run: |
           npm run build
-          mkdir -p ../internal/httpapi/dist
-          rm -rf ../internal/httpapi/dist/*
-          cp -R dist/. ../internal/httpapi/dist/
         working-directory: ui
 
       - name: Run Go tests
@@ -96,9 +93,6 @@ jobs:
       - name: Build UI bundle for embedded assets
         run: |
           npm run build
-          mkdir -p ../internal/httpapi/dist
-          rm -rf ../internal/httpapi/dist/*
-          cp -R dist/. ../internal/httpapi/dist/
         working-directory: ui
 
       - name: Build binary

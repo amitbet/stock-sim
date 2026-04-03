@@ -11,7 +11,7 @@ import (
 
 func TestRunExecutesFirstEntryAndLadder(t *testing.T) {
 	bars := sampleBars()
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceSameDayClose)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceSameDayClose, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestRunExecutesFirstEntryAndLadder(t *testing.T) {
 
 func TestRunSupportsNextDayOpen(t *testing.T) {
 	bars := sampleBars()
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceNextDayOpen)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceNextDayOpen, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestRunSupportsNextDayOpen(t *testing.T) {
 
 func TestRunSupportsAverageOfDay(t *testing.T) {
 	bars := sampleBars()
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceAverageOfDay)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceAverageOfDay, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestRunSupportsAverageOfDay(t *testing.T) {
 
 func TestRunSupportsRandomInDay(t *testing.T) {
 	bars := sampleBars()
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceRandomInDay)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceRandomInDay, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestRunSupportsRandomInDay(t *testing.T) {
 
 func TestStrongRecoveryRequiresActualSMACross(t *testing.T) {
 	bars := sampleBars()
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceSameDayClose)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceSameDayClose, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -107,7 +107,7 @@ exit:
   hold_days_after_full_invest: 20
 `
 
-	result, err := sim.Run(sampleBars(), sampleBars()[55].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose)
+	result, err := sim.Run(sampleBars(), sampleBars()[55].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -145,7 +145,7 @@ exit: {}
 		makeBar("2024-01-09", 100.5, 102, 100, 101),
 	}
 
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -183,7 +183,7 @@ exit:
 		makeBar("2024-01-08", 100.5, 102, 100, 101),
 	}
 
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -242,7 +242,7 @@ exit:
 		makeBar("2024-01-09", 97.5, 98, 92.5, 93),
 	}
 
-	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose)
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose, sim.ReferencePriceClose, nil)
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -260,6 +260,83 @@ exit:
 	}
 	if result.Actions[2].TriggerID != "rebound" || result.Actions[2].AllocationPct != 15 {
 		t.Fatalf("expected rebound to consume the next 15%% tranche, got %+v", result.Actions[2])
+	}
+}
+
+func TestRunSupportsReferencePriceModes(t *testing.T) {
+	raw := `metadata:
+  name: Reference price mode
+  version: "1"
+  symbol_scope: any
+reference_price: sell_price
+entry_rules:
+  - id: first-entry
+    label: First
+    trigger:
+      drop_pct_from_reference: 15
+    action:
+      type: buy_percent
+      buy_percent: 100
+constraints:
+  max_actions_per_day: 1
+  prevent_duplicate_level_buys: true
+exit:
+  hold_days_after_full_invest: 20
+`
+
+	bars := []data.Bar{
+		makeBar("2024-01-02", 120, 125, 95, 100),
+		makeBar("2024-01-03", 100, 101, 98, 99),
+	}
+
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose, sim.ReferencePriceHigh, nil)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if result.Summary.ReferencePrice != 125 {
+		t.Fatalf("expected reference price 125 from high, got %.2f", result.Summary.ReferencePrice)
+	}
+	if len(result.Actions) != 1 {
+		t.Fatalf("expected entry to trigger from high-based reference, got %+v", result.Actions)
+	}
+}
+
+func TestRunSupportsReferencePriceOverride(t *testing.T) {
+	raw := `metadata:
+  name: Reference price override
+  version: "1"
+  symbol_scope: any
+reference_price: sell_price
+entry_rules:
+  - id: first-entry
+    label: First
+    trigger:
+      drop_pct_from_reference: 10
+    action:
+      type: buy_percent
+      buy_percent: 100
+constraints:
+  max_actions_per_day: 1
+  prevent_duplicate_level_buys: true
+exit:
+  hold_days_after_full_invest: 20
+`
+
+	bars := []data.Bar{
+		makeBar("2024-01-02", 100, 102, 95, 100),
+		makeBar("2024-01-03", 100, 101, 89, 90),
+	}
+	override := 110.0
+
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceSameDayClose, sim.ReferencePriceClose, &override)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if result.Summary.ReferencePrice != override {
+		t.Fatalf("expected override reference price %.2f, got %.2f", override, result.Summary.ReferencePrice)
+	}
+	if len(result.Actions) != 1 {
+		t.Fatalf("expected override-based trigger to fire, got %+v", result.Actions)
 	}
 }
 

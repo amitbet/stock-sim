@@ -159,14 +159,31 @@ func (h *apiHandler) runSimulation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.executeOne(r.Context(), body.Symbol, body.ReferenceSellDate, body.Plan, body.ExecutionPriceMode)
+	result, err := h.executeOne(
+		r.Context(),
+		body.Symbol,
+		body.ReferenceSellDate,
+		body.Plan,
+		body.ExecutionPriceMode,
+		body.ReferencePriceMode,
+		body.ReferencePrice,
+	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	if body.HoldDaysAfterFullInvest != nil {
-		result, err = h.executeOneWithHoldOverride(r.Context(), body.Symbol, body.ReferenceSellDate, body.Plan, body.ExecutionPriceMode, body.HoldDaysAfterFullInvest)
+		result, err = h.executeOneWithHoldOverride(
+			r.Context(),
+			body.Symbol,
+			body.ReferenceSellDate,
+			body.Plan,
+			body.ExecutionPriceMode,
+			body.ReferencePriceMode,
+			body.ReferencePrice,
+			body.HoldDaysAfterFullInvest,
+		)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
@@ -189,7 +206,16 @@ func (h *apiHandler) runBatch(w http.ResponseWriter, r *http.Request) {
 
 	var result sim.BatchResult
 	for _, dateString := range body.ReferenceSellDates {
-		run, err := h.executeOneWithHoldOverride(r.Context(), body.Symbol, dateString, body.Plan, body.ExecutionPriceMode, body.HoldDaysAfterFullInvest)
+		run, err := h.executeOneWithHoldOverride(
+			r.Context(),
+			body.Symbol,
+			dateString,
+			body.Plan,
+			body.ExecutionPriceMode,
+			body.ReferencePriceMode,
+			nil,
+			body.HoldDaysAfterFullInvest,
+		)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("%s: %w", dateString, err))
 			return
@@ -199,11 +225,11 @@ func (h *apiHandler) runBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *apiHandler) executeOne(ctx context.Context, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode) (sim.Result, error) {
-	return h.executeOneWithHoldOverride(ctx, symbol, referenceSellDate, rawPlan, mode, nil)
+func (h *apiHandler) executeOne(ctx context.Context, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, referencePriceMode sim.ReferencePriceMode, referencePriceOverride *float64) (sim.Result, error) {
+	return h.executeOneWithHoldOverride(ctx, symbol, referenceSellDate, rawPlan, mode, referencePriceMode, referencePriceOverride, nil)
 }
 
-func (h *apiHandler) executeOneWithHoldOverride(ctx context.Context, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, holdDaysOverride *int) (sim.Result, error) {
+func (h *apiHandler) executeOneWithHoldOverride(ctx context.Context, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, referencePriceMode sim.ReferencePriceMode, referencePriceOverride *float64, holdDaysOverride *int) (sim.Result, error) {
 	var result sim.Result
 	refDate, err := time.Parse("2006-01-02", referenceSellDate)
 	if err != nil {
@@ -227,7 +253,7 @@ func (h *apiHandler) executeOneWithHoldOverride(ctx context.Context, symbol, ref
 		return result, err
 	}
 
-	return sim.Run(bars, refDate, parsed, mode)
+	return sim.Run(bars, refDate, parsed, mode, referencePriceMode, referencePriceOverride)
 }
 
 func (h *apiHandler) parseAndValidate(ctx context.Context, symbol, rawPlan string) (plan.StrategyPlan, plan.ValidationResult, error) {
@@ -256,6 +282,8 @@ type simulationRequest struct {
 	ReferenceSellDate       string                 `json:"reference_sell_date"`
 	Plan                    string                 `json:"plan"`
 	ExecutionPriceMode      sim.ExecutionPriceMode `json:"execution_price_mode"`
+	ReferencePriceMode      sim.ReferencePriceMode `json:"reference_price_mode"`
+	ReferencePrice          *float64               `json:"reference_price,omitempty"`
 	HoldDaysAfterFullInvest *int                   `json:"hold_days_after_full_invest,omitempty"`
 }
 
@@ -264,6 +292,7 @@ type batchSimulationRequest struct {
 	ReferenceSellDates      []string               `json:"reference_sell_dates"`
 	Plan                    string                 `json:"plan"`
 	ExecutionPriceMode      sim.ExecutionPriceMode `json:"execution_price_mode"`
+	ReferencePriceMode      sim.ReferencePriceMode `json:"reference_price_mode"`
 	HoldDaysAfterFullInvest *int                   `json:"hold_days_after_full_invest,omitempty"`
 }
 
