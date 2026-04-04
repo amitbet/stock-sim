@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BatchReportModal from "./components/BatchReportModal.jsx";
 import CandleChart from "./components/CandleChart.jsx";
 import Controls from "./components/Controls.jsx";
@@ -16,6 +16,9 @@ import {
 } from "./lib/api.js";
 
 const AUTO_RUN_DEBOUNCE_MS = 350;
+
+/** Injected in vite.config.js from package.json (always available in dev/build). */
+const UI_PKG_VERSION = import.meta.env.VITE_UI_PKG_VERSION || "";
 
 function formatISODate(value) {
   return value.toISOString().slice(0, 10);
@@ -124,29 +127,48 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   const [updateBusy, setUpdateBusy] = useState(false);
-  const [appMenuOpen, setAppMenuOpen] = useState(false);
-  const appMenuRef = useRef(null);
+  const [appVersion, setAppVersion] = useState("");
+  const [isDesktopApp, setIsDesktopApp] = useState(false);
   /** Latest ticker; used when fetchSymbols completes async so we preserve user choice across data source changes. */
   const symbolRef = useRef(symbol);
   symbolRef.current = symbol;
 
   useEffect(() => {
-    if (import.meta.env.DEV) {
-      return undefined;
-    }
-    if (typeof window === "undefined" || !window.go?.main?.App) {
-      return undefined;
-    }
     let cancelled = false;
     (async () => {
       try {
-        const { CheckForUpdates } = await import("../wailsjs/go/main/App.js");
-        const status = await CheckForUpdates();
-        if (!cancelled && status?.update_available) {
-          setUpdateStatus(status);
+        // Wails injects window.go after load; production builds are not DEV, so we must wait for
+        // bindings in release too — otherwise isDesktopApp/appVersion never set (no footer version).
+        const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+        const wailsHost =
+          typeof window !== "undefined" &&
+          (typeof window.runtime !== "undefined" ||
+            typeof window.chrome?.webview !== "undefined" ||
+            /\bWails\b/i.test(ua));
+        if (typeof window !== "undefined" && !window.go?.main?.App && wailsHost) {
+          for (let i = 0; i < 80 && !window.go?.main?.App; i++) {
+            await new Promise((r) => setTimeout(r, 25));
+          }
+        }
+        if (typeof window !== "undefined" && window.go?.main?.App) {
+          setIsDesktopApp(true);
+          const { Version } = await import("../wailsjs/go/main/App.js");
+          let v = await Version();
+          for (let i = 0; i < 40 && !v && !cancelled; i++) {
+            await new Promise((r) => setTimeout(r, 25));
+            v = await Version();
+          }
+          if (!cancelled) {
+            const s = v != null ? String(v).trim() : "";
+            setAppVersion(s || "unknown");
+          }
+        } else if (import.meta.env.DEV) {
+          setAppVersion("dev");
         }
       } catch {
-        /* ignore update check failures */
+        if (!cancelled && import.meta.env.DEV) {
+          setAppVersion("dev");
+        }
       }
     })();
     return () => {
@@ -154,18 +176,25 @@ export default function App() {
     };
   }, []);
 
+  const refreshUpdateStatus = useCallback(async () => {
+    if (typeof window === "undefined" || !window.go?.main?.App) {
+      return;
+    }
+    try {
+      const { CheckForUpdates } = await import("../wailsjs/go/main/App.js");
+      const status = await CheckForUpdates();
+      setUpdateStatus(status);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
-    if (!appMenuOpen) {
+    if (!isDesktopApp) {
       return undefined;
     }
-    function handlePointerDown(event) {
-      if (appMenuRef.current && !appMenuRef.current.contains(event.target)) {
-        setAppMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [appMenuOpen]);
+    void refreshUpdateStatus();
+  }, [isDesktopApp, refreshUpdateStatus]);
 
   useEffect(() => {
     async function bootstrap() {
@@ -473,7 +502,6 @@ export default function App() {
   async function handleApplyUpdate() {
     setUpdateBusy(true);
     setError("");
-    setAppMenuOpen(false);
     try {
       const { ApplyUpdateAndRestart } = await import("../wailsjs/go/main/App.js");
       await ApplyUpdateAndRestart();
@@ -482,9 +510,6 @@ export default function App() {
       setUpdateBusy(false);
     }
   }
-
-  const showUpdateChrome =
-    !import.meta.env.DEV && typeof window !== "undefined" && Boolean(window.go?.main?.App) && updateStatus?.update_available;
 
   return (
     <div className="app-shell">
@@ -495,38 +520,6 @@ export default function App() {
           <p>Click a sell date, replay staged re-entry, compare outcomes.</p>
         </div>
         <div className="hero-right">
-          {showUpdateChrome ? (
-            <div className="app-menu-wrap" ref={appMenuRef}>
-              <button
-                type="button"
-                className="app-menu-trigger"
-                aria-expanded={appMenuOpen}
-                aria-haspopup="menu"
-                aria-label="App menu"
-                onClick={() => setAppMenuOpen((o) => !o)}
-              >
-                ⋮
-              </button>
-              {appMenuOpen ? (
-                <ul className="app-menu-dropdown" role="menu">
-                  <li className="app-menu-heading" role="presentation">
-                    Update available
-                  </li>
-                  <li role="none">
-                    <button
-                      type="button"
-                      className="app-menu-item"
-                      role="menuitem"
-                      disabled={updateBusy}
-                      onClick={() => void handleApplyUpdate()}
-                    >
-                      {updateBusy ? "Updating…" : `Update to ${updateStatus.latest}`}
-                    </button>
-                  </li>
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
           <div className="hero-card">
             <div className="hero-metric">
               <span>Symbol</span>
@@ -642,6 +635,16 @@ export default function App() {
         onSelectRun={setSelectedRunIndex}
         onClose={() => setBatchOpen(false)}
       />
+
+      <footer className="app-version-footer" aria-label="Application version">
+        <span>
+          {appVersion
+            ? `v${appVersion}`
+            : import.meta.env.DEV
+              ? `v${UI_PKG_VERSION || "?"} dev`
+              : `v${UI_PKG_VERSION || "…"}`}
+        </span>
+      </footer>
     </div>
   );
 }

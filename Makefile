@@ -18,7 +18,7 @@ WIN_BIN := $(BIN_DIR)/stock-sim-windows-amd64.exe
 
 .PHONY: dev dev-browser dev-api dev-ui dev-wails ui-install win7-go build-ui build build-server build-desktop build-win7 test test-go test-ui clean
 
-# Wails desktop (fixed Vite 5173 + API 3002 when SIM_ADDR is set in env / wails.json)
+# Wails desktop (Vite 5173 + API 3002). Default `make` runs this.
 dev-wails:
 	SIM_ADDR=127.0.0.1:3002 $(WAILS) dev
 

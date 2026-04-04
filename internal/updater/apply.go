@@ -17,6 +17,9 @@ func Apply(currentVersion string) error {
 	if _, err := repoFromEnv(); err != nil {
 		return err
 	}
+	if err := preflightApplyInstallLocation(); err != nil {
+		return err
+	}
 
 	rel, err := FetchLatestRelease()
 	if err != nil {
