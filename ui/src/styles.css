@@ -445,6 +445,36 @@ select,
   background: rgba(76, 201, 240, 0.08);
 }
 
+.pending-triggers-section {
+  margin-top: 24px;
+}
+
+.pending-triggers-header {
+  align-items: end;
+}
+
+.pending-triggers-header h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.pending-cash-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(100%, 220px);
+}
+
+.pending-cash-input span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.empty-table-cell {
+  color: var(--muted);
+  text-align: center;
+}
+
 .empty-state {
   padding: 28px;
   text-align: center;

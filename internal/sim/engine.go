@@ -158,8 +158,60 @@ func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPla
 	}
 	result.Stats.BarsToEnd = endIndex - referenceIndex
 	result.Stats.MaxDrawdownPct = maxDrawdownPct
+	result.PendingTriggers = buildPendingTriggers(strategy, executedRules, referencePrice, plannedBuys, nextAllocationIndex, totalInvestedPct)
 
 	return result, nil
+}
+
+func buildPendingTriggers(strategy plan.StrategyPlan, executedRules map[string]bool, referencePrice float64, plannedBuys []float64, nextAllocationIndex int, invested float64) []PendingTrigger {
+	remaining := 100.0 - invested
+	if remaining <= 0 {
+		return nil
+	}
+
+	pending := make([]PendingTrigger, 0, len(strategy.EntryRules))
+	projectedNextAllocationIndex := nextAllocationIndex
+	projectedInvested := invested
+
+	for _, rule := range strategy.EntryRules {
+		if executedRules[rule.ID] {
+			continue
+		}
+
+		allocation := allocationForRule(rule, plannedBuys, projectedNextAllocationIndex, projectedInvested)
+		if allocation <= 0 {
+			continue
+		}
+
+		var buyPrice *float64
+		if projectedPrice, ok := projectedBuyPriceForTrigger(rule.Trigger, referencePrice); ok {
+			buyPrice = float64Ptr(projectedPrice)
+		}
+
+		pending = append(pending, PendingTrigger{
+			TriggerID:       rule.ID,
+			Label:           rule.Label,
+			ActionType:      rule.Action.Type,
+			TriggerReason:   triggerReasonTemplate(rule.Trigger),
+			TriggerPrice:    plannedTriggerPrice(rule.Trigger, referencePrice),
+			AllocationPct:   allocation,
+			BuyPrice:        buyPrice,
+			CashToInvestPct: allocation,
+		})
+
+		projectedInvested += allocation
+		if rule.Action.Type == "buy_percent" || rule.Action.Type == "buy_next_planned_allocation" {
+			projectedNextAllocationIndex++
+		} else if rule.Action.Type == "invest_remaining" {
+			projectedNextAllocationIndex = len(plannedBuys)
+		}
+
+		if projectedInvested >= 99.999 {
+			break
+		}
+	}
+
+	return pending
 }
 
 func referencePriceForBar(bar data.Bar, mode ReferencePriceMode) float64 {
@@ -299,6 +351,62 @@ func triggerReasonForMatch(trigger plan.Trigger, bars []data.Bar, referenceIndex
 	default:
 		return "rule trigger"
 	}
+}
+
+func triggerReasonTemplate(trigger plan.Trigger) string {
+	if len(trigger.AnyOf) > 0 {
+		parts := make([]string, 0, len(trigger.AnyOf))
+		for _, child := range trigger.AnyOf {
+			parts = append(parts, triggerReasonTemplate(child))
+		}
+		return fmt.Sprintf("any of: %v", parts)
+	}
+
+	switch {
+	case trigger.DropPctFromReference != nil:
+		return fmt.Sprintf("drop %.2f%% from S", *trigger.DropPctFromReference)
+	case trigger.TradingDaysSinceReference != nil:
+		return fmt.Sprintf("%d trading days since S", *trigger.TradingDaysSinceReference)
+	case trigger.RisePctFromLowSinceRef != nil:
+		return fmt.Sprintf("rise %.2f%% from low since S", *trigger.RisePctFromLowSinceRef)
+	case len(trigger.CloseAboveSMA) > 0:
+		return fmt.Sprintf("close above SMA %v", trigger.CloseAboveSMA)
+	default:
+		return "rule trigger"
+	}
+}
+
+func plannedTriggerPrice(trigger plan.Trigger, referencePrice float64) *float64 {
+	if len(trigger.AnyOf) > 0 {
+		for _, child := range trigger.AnyOf {
+			if price := plannedTriggerPrice(child, referencePrice); price != nil {
+				return price
+			}
+		}
+		return nil
+	}
+
+	if trigger.DropPctFromReference != nil {
+		return float64Ptr(referencePrice * (1 - (*trigger.DropPctFromReference / 100)))
+	}
+	return nil
+}
+
+func projectedBuyPriceForTrigger(trigger plan.Trigger, referencePrice float64) (float64, bool) {
+	if len(trigger.AnyOf) > 0 {
+		for _, child := range trigger.AnyOf {
+			if price, ok := projectedBuyPriceForTrigger(child, referencePrice); ok {
+				return price, true
+			}
+		}
+		return 0, false
+	}
+
+	if trigger.DropPctFromReference != nil {
+		return referencePrice * (1 - (*trigger.DropPctFromReference / 100)), true
+	}
+
+	return 0, false
 }
 
 func crossedAboveAllSMAs(bars []data.Bar, currentIndex int, periods []int) (bool, bool) {

@@ -135,6 +135,59 @@ func TestRunSupportsAverageOfDay(t *testing.T) {
 	}
 }
 
+func TestRunReturnsPendingTriggersForUnboughtRules(t *testing.T) {
+	raw := `metadata:
+  name: Pending trigger projection
+  version: "1"
+  symbol_scope: any
+reference_price: sell_price
+entry_rules:
+  - id: first-entry
+    label: First
+    trigger:
+      drop_pct_from_reference: 2
+    action:
+      type: buy_percent
+      buy_percent: 20
+  - id: ladder-4
+    label: Ladder 4
+    trigger:
+      drop_pct_from_reference: 4
+    action:
+      type: buy_percent
+      buy_percent: 15
+constraints:
+  max_actions_per_day: 1
+  prevent_duplicate_level_buys: true
+exit: {}
+`
+
+	bars := []data.Bar{
+		makeBar("2024-01-02", 100, 101, 99, 100),
+		makeBar("2024-01-03", 100, 100, 98, 99),
+	}
+
+	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(raw), sim.ExecutionPriceExact, sim.ReferencePriceClose, nil)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(result.Actions) != 1 {
+		t.Fatalf("expected one executed action, got %+v", result.Actions)
+	}
+	if len(result.PendingTriggers) != 1 {
+		t.Fatalf("expected one pending trigger, got %+v", result.PendingTriggers)
+	}
+	if result.PendingTriggers[0].TriggerID != "ladder-4" {
+		t.Fatalf("expected pending ladder-4, got %+v", result.PendingTriggers[0])
+	}
+	if result.PendingTriggers[0].BuyPrice == nil || *result.PendingTriggers[0].BuyPrice != 96 {
+		t.Fatalf("expected projected buy price 96.00, got %+v", result.PendingTriggers[0].BuyPrice)
+	}
+	if result.PendingTriggers[0].CashToInvestPct != 15 {
+		t.Fatalf("expected projected cash allocation 15, got %.2f", result.PendingTriggers[0].CashToInvestPct)
+	}
+}
+
 func TestRunSupportsRandomInDay(t *testing.T) {
 	bars := sampleBars()
 	result, err := sim.Run(bars, bars[0].Date, plan.MustParse(plan.DefaultQQQPlanYAML), sim.ExecutionPriceRandomInDay, sim.ReferencePriceClose, nil)

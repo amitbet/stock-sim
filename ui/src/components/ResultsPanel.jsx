@@ -1,3 +1,5 @@
+import { useMemo, useState } from "react";
+
 function summaryItem(label, value) {
   return (
     <div className="summary-item" key={label}>
@@ -7,8 +9,23 @@ function summaryItem(label, value) {
   );
 }
 
+function formatMoney(value) {
+  return value != null ? value.toFixed(2) : "--";
+}
+
 export default function ResultsPanel({ result }) {
   const actions = result?.actions ?? [];
+  const pendingTriggers = result?.pending_triggers ?? [];
+  const [cashAmount, setCashAmount] = useState("");
+
+  const parsedCashAmount = useMemo(() => {
+    const trimmed = String(cashAmount).trim();
+    if (!trimmed) {
+      return 0;
+    }
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }, [cashAmount]);
 
   return (
     <section className="panel">
@@ -60,6 +77,63 @@ export default function ResultsPanel({ result }) {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="pending-triggers-section">
+            <div className="panel-header pending-triggers-header">
+              <div>
+                <h3>Unbought Triggers</h3>
+                <p>Projected entries that did not execute in this run. Cash to invest is based on the amount you enter below.</p>
+              </div>
+              <label className="pending-cash-input">
+                <span>Cash Amount</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  className="settings-input"
+                  value={cashAmount}
+                  onChange={(event) => setCashAmount(event.target.value)}
+                  placeholder="10000"
+                />
+              </label>
+            </div>
+
+            <div className="table-scroll">
+              <table className="ledger-table">
+                <thead>
+                  <tr>
+                    <th>Rule</th>
+                    <th>Trigger</th>
+                    <th>S-Based Trigger Price</th>
+                    <th>Buy Price</th>
+                    <th>Invest %</th>
+                    <th>Cash To Invest</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingTriggers.length > 0 ? (
+                    pendingTriggers.map((trigger) => (
+                      <tr key={trigger.trigger_id}>
+                        <td>{trigger.label || trigger.trigger_id}</td>
+                        <td>{trigger.trigger_reason}</td>
+                        <td>{formatMoney(trigger.trigger_price)}</td>
+                        <td>{formatMoney(trigger.buy_price)}</td>
+                        <td>{trigger.cash_to_invest_pct.toFixed(2)}%</td>
+                        <td>{formatMoney((parsedCashAmount * trigger.cash_to_invest_pct) / 100)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="6" className="empty-table-cell">
+                        No unbought triggers remain for this run.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       ) : (

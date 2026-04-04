@@ -19,16 +19,27 @@ const (
 )
 
 type Action struct {
-	Date          string  `json:"date"`
-	TriggerDate   string  `json:"trigger_date"`
+	Date          string   `json:"date"`
+	TriggerDate   string   `json:"trigger_date"`
 	TriggerPrice  *float64 `json:"trigger_price,omitempty"`
-	TriggerReason string  `json:"trigger_reason"`
-	TriggerID     string  `json:"trigger_id"`
-	Label         string  `json:"label"`
-	ActionType    string  `json:"action_type"`
-	AllocationPct float64 `json:"allocation_pct"`
-	FillPrice     float64 `json:"fill_price"`
-	Notes         string  `json:"notes"`
+	TriggerReason string   `json:"trigger_reason"`
+	TriggerID     string   `json:"trigger_id"`
+	Label         string   `json:"label"`
+	ActionType    string   `json:"action_type"`
+	AllocationPct float64  `json:"allocation_pct"`
+	FillPrice     float64  `json:"fill_price"`
+	Notes         string   `json:"notes"`
+}
+
+type PendingTrigger struct {
+	TriggerID       string   `json:"trigger_id"`
+	Label           string   `json:"label"`
+	ActionType      string   `json:"action_type"`
+	TriggerReason   string   `json:"trigger_reason"`
+	TriggerPrice    *float64 `json:"trigger_price,omitempty"`
+	AllocationPct   float64  `json:"allocation_pct"`
+	BuyPrice        *float64 `json:"buy_price,omitempty"`
+	CashToInvestPct float64  `json:"cash_to_invest_pct"`
 }
 
 type Summary struct {
@@ -48,9 +59,10 @@ type Stats struct {
 }
 
 type Result struct {
-	Summary Summary  `json:"summary"`
-	Actions []Action `json:"actions"`
-	Stats   Stats    `json:"stats"`
+	Summary         Summary          `json:"summary"`
+	Actions         []Action         `json:"actions"`
+	PendingTriggers []PendingTrigger `json:"pending_triggers,omitempty"`
+	Stats           Stats            `json:"stats"`
 }
 
 type BatchResult struct {

@@ -276,6 +276,7 @@ describe("App", () => {
         execution_mode: "same_day_close"
       },
       actions: null,
+      pending_triggers: [],
       stats: {
         max_drawdown_pct: 0,
         bars_to_full_invest: 0,
@@ -293,6 +294,41 @@ describe("App", () => {
     await screen.findByText("Run Results");
 
     expect(screen.getByText("Not reached")).toBeInTheDocument();
+  });
+
+  it("renders unbought triggers and calculates cash to invest", async () => {
+    enqueueResponse("/api/simulations/run", {
+      ...singleRunResponse(),
+      pending_triggers: [
+        {
+          trigger_id: "ladder-4",
+          label: "Add 15% on 4% drawdown",
+          action_type: "buy_percent",
+          trigger_reason: "drop 4.00% from S",
+          trigger_price: 96.96,
+          buy_price: 96.96,
+          allocation_pct: 15,
+          cash_to_invest_pct: 15
+        }
+      ]
+    });
+
+    render(<App />);
+
+    await screen.findByText("Stock Simulator");
+    await waitForBarsLoaded();
+
+    fireEvent.click(screen.getByText("Select 2024-01-02"));
+
+    await screen.findByText("Unbought Triggers");
+    expect(screen.getByText("Add 15% on 4% drawdown")).toBeInTheDocument();
+    expect(screen.getAllByText("96.96")).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText("Cash Amount"), {
+      target: { value: "10000" }
+    });
+
+    expect(screen.getByText("1500.00")).toBeInTheDocument();
   });
 });
 
@@ -328,6 +364,7 @@ function singleRunResponse() {
       execution_mode: "next_day_open"
     },
     actions: [],
+    pending_triggers: [],
     stats: {
       max_drawdown_pct: -4.5,
       bars_to_full_invest: 4,
