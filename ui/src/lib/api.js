@@ -18,9 +18,16 @@ async function resolveApiBase() {
   if (!apiBaseReady) {
     apiBaseReady = (async () => {
       let hasWails = typeof window !== "undefined" && !!window.go?.main?.App;
-      // Browser-only dev (npm run dev + cmd/server): Vite proxies /api → SIM_ADDR (see vite.config.js).
-      // Wails dev must use GetAPIBaseURL(): the API binds SIM_ADDR or 127.0.0.1:0 (random port), which
-      // will not match the fixed proxy port unless we always use the real origin.
+      // In Wails dev the webview loads Vite (same as browser dev). If window.go is not ready yet, wait
+      // only when Wails injected window.runtime — otherwise we'd cache "" and miss GetAPIBaseURL() for
+      // SIM_ADDR / 127.0.0.1:0 (dynamic port). Pure browser dev has no window.runtime, so no delay.
+      const wailsChrome =
+        typeof window !== "undefined" && typeof window.runtime !== "undefined";
+      if (import.meta.env.DEV && !hasWails && wailsChrome) {
+        hasWails = await waitForWailsBindings();
+      }
+      // Browser-only dev (npm run dev + cmd/server): Vite proxies /api → localhost:3002 (vite.config.js).
+      // Makefile sets SIM_ADDR=127.0.0.1:3002 for dev-api; no dynamic port here.
       if (import.meta.env.DEV && !hasWails) {
         apiBaseCache = "";
         return;

@@ -29,7 +29,7 @@ dev-browser:
 	trap 'kill 0' EXIT; $(MAKE) dev-api & $(MAKE) dev-ui & wait
 
 dev-api:
-	SIM_DB_PATH=../stock-scanner/data/scanner.sqlite $(GO) run ./cmd/server
+	SIM_ADDR=127.0.0.1:3002 SIM_DB_PATH=../stock-scanner/data/scanner.sqlite $(GO) run ./cmd/server
 
 ui-install:
 	@if [ ! -d "$(UI_DIR)/node_modules" ]; then \
