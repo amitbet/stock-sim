@@ -223,12 +223,15 @@ jobs:
           wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}"
 
       - name: Zip build output
-        shell: bash
+        shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          cd build/bin
-          zip -r "../../stock-sim-windows-amd64-v${RELEASE_VERSION}.zip" .
+          $archive = "stock-sim-windows-amd64-v${env:RELEASE_VERSION}.zip"
+          if (Test-Path $archive) {
+            Remove-Item $archive -Force
+          }
+          Compress-Archive -Path "build/bin/*" -DestinationPath $archive
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
