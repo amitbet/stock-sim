@@ -13,6 +13,7 @@ import (
 var assets embed.FS
 
 func main() {
+
 	app := NewApp()
 	err := wails.Run(&options.App{
 		Title:            "stock-sim",
