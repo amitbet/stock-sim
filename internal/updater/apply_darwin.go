@@ -61,9 +61,29 @@ rm -f "$0"
 		return err
 	}
 
-	cmd := exec.Command("/bin/bash", shPath)
+	// Run the script under nohup so it survives Wails/Go exiting (otherwise the shell gets SIGHUP
+	// when the parent process dies and the copy/open never runs).
+	logPath := filepath.Join(os.TempDir(), fmt.Sprintf("stock-sim-update-%d.log", os.Getpid()))
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	nohup, err := exec.LookPath("nohup")
+	if err != nil {
+		_ = logFile.Close()
+		return fmt.Errorf("nohup: %w", err)
+	}
+	cmd := exec.Command(nohup, "/bin/bash", shPath)
+	cmd.Stdin = nil
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	return cmd.Start()
+	err = cmd.Start()
+	_ = logFile.Close()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func findParentAppBundle(dir string) (string, error) {

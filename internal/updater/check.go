@@ -27,18 +27,24 @@ func Check(current string) (*Status, error) {
 	if err != nil {
 		return nil, err
 	}
+	return computeUpdateStatus(current, rel), nil
+}
+
+// computeUpdateStatus maps a fetched release to UI status (semver compare).
+func computeUpdateStatus(current string, rel *Release) *Status {
+	st := &Status{Current: current}
 	latest := strings.TrimSpace(rel.TagName)
 	st.Latest = latest
 	if latest == "" || current == "" || current == "dev" {
 		st.Message = "Could not compare versions (need a release tag and a non-dev build version)"
-		return st, nil
+		return st
 	}
 
 	c := normalizeSemver(current)
 	l := normalizeSemver(latest)
 	if c == "" || l == "" {
 		st.Message = "Non-semver tags; compare manually"
-		return st, nil
+		return st
 	}
 	st.UpdateAvailable = semver.Compare(l, c) > 0
 	if !st.UpdateAvailable {
@@ -46,5 +52,5 @@ func Check(current string) (*Status, error) {
 	} else {
 		st.Message = fmt.Sprintf("Update available: %s → %s", current, latest)
 	}
-	return st, nil
+	return st
 }

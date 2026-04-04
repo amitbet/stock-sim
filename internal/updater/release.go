@@ -14,9 +14,13 @@ import (
 	"stock-sim/internal/version"
 )
 
+// githubAPIRoot is the GitHub API origin (scheme + host, no trailing slash).
+// Tests may point this at an httptest.Server.
+var githubAPIRoot = "https://api.github.com"
+
 // Release holds GitHub GET /releases/latest payload fields we need.
 type Release struct {
-	TagName string        `json:"tag_name"`
+	TagName string         `json:"tag_name"`
 	Assets  []ReleaseAsset `json:"assets"`
 }
 
@@ -54,7 +58,11 @@ func FetchLatestRelease() (*Release, error) {
 	if err != nil {
 		return nil, err
 	}
-	url := "https://api.github.com/repos/" + repo + "/releases/latest"
+	url := githubAPIRoot + "/repos/" + repo + "/releases/latest"
+	return fetchLatestReleaseFromURL(url)
+}
+
+func fetchLatestReleaseFromURL(url string) (*Release, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
