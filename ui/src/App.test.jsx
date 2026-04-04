@@ -100,11 +100,20 @@ describe("App", () => {
     await screen.findByText("Batch Simulation Report");
   });
 
-  it("switches data source and reloads the symbol universe", async () => {
+  it("keeps the selected ticker when switching data source if Yahoo can load it", async () => {
     render(<App />);
 
     await screen.findByText("Stock Simulator");
     await waitForBarsLoaded();
+
+    const symbolInput = screen.getByPlaceholderText("Search ticker");
+    fireEvent.focus(symbolInput);
+    fireEvent.change(symbolInput, { target: { value: "AAPL" } });
+    fireEvent.keyDown(symbolInput, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("AAPL")).toBeInTheDocument();
+    });
 
     fireEvent.change(screen.getByLabelText("Data source"), {
       target: { value: "yahoo" }
@@ -117,9 +126,9 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue("SPY")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("AAPL")).toBeInTheDocument();
     });
-    expect(screen.getByText("SPDR S&P 500 ETF Trust.")).toBeInTheDocument();
+    expect(screen.getByText("Apple Inc.")).toBeInTheDocument();
   });
 
   it("allows entering a custom ticker that is not in the preset list", async () => {

@@ -148,21 +148,71 @@ func NewStore(path string) (*Store, error) {
 		dsnPath = "/" + dsnPath
 	}
 
+	// mode=ro keeps stock-sim from mutating the scanner DB and works on read-only volumes / locked files.
+	// (Read-write + PRAGMA query_only was reverted: it fails when the file or mount is read-only.)
 	dsn := url.URL{
 		Scheme:   "file",
 		Path:     dsnPath,
-		RawQuery: "mode=ro",
+		RawQuery: "mode=ro&_pragma=busy_timeout(8000)",
 	}
 
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite ping: %w", err)
+	}
+	if err := validateSQLiteBarsDaily(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	return &Store{
 		db:     db,
 		source: "sqlite",
 	}, nil
+}
+
+func validateSQLiteBarsDaily(db *sql.DB) error {
+	var n int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type IN ('table', 'view') AND lower(name) = 'bars_daily'
+	`).Scan(&n)
+	if err != nil {
+		return fmt.Errorf("sqlite schema check: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	tables := sqliteUserTableNames(db)
+	return fmt.Errorf(
+		"sqlite has no bars_daily table (expected columns: symbol, date, open, high, low, close, volume, vwap). "+
+			"Tables in this file: %v. "+
+			"Use your stock-scanner database (often named scanner.sqlite). "+
+			"A file named stock-sim-scanner.sqlite next to stock-sim is a local copy of scanner.sqlite; if it is stale or empty, set SIM_DB_PATH to the real scanner.sqlite or delete the copy and restart after stock-scanner has created bars_daily",
+		tables,
+	)
+}
+
+func sqliteUserTableNames(db *sql.DB) []string {
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return names
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 func newStooqClient() *stooqClient {

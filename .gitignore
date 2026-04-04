@@ -15,3 +15,6 @@ __debug_bin*
 .DS_Store
 stock-sim-scanner.sqlite
 stock-sim
+
+# Wails
+build/bin/

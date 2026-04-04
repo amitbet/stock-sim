@@ -10,7 +10,6 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,7 +17,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.21.13"
+          go-version: "1.22.10"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -36,8 +35,7 @@ jobs:
         working-directory: ui
 
       - name: Build UI bundle for embedded assets
-        run: |
-          npm run build
+        run: npm run build
         working-directory: ui
 
       - name: Run Go tests
@@ -82,43 +80,19 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
 
-  build:
+  build-win7-html:
     needs:
       - verify
       - version
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: windows-amd64
-            go-version: "1.21.13"
-            goos: windows
-            goarch: amd64
-            archive: zip
-            binary-name: stock-sim.exe
-          - id: windows7-amd64
-            go-version: "1.20.14"
-            goos: windows
-            goarch: amd64
-            archive: zip
-            binary-name: stock-sim.exe
-          - id: macos-amd64
-            go-version: "1.21.13"
-            goos: darwin
-            goarch: amd64
-            archive: tar.gz
-            binary-name: stock-sim
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Set up Go (Win7 / static binary)
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: "1.20.14"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -131,60 +105,143 @@ jobs:
         run: npm ci
         working-directory: ui
 
-      - name: Build UI bundle for embedded assets
-        run: |
-          npm run build
+      - name: Build UI bundle
+        run: npm run build
         working-directory: ui
 
-      - name: Build binary
+      - name: Build Windows amd64 (cmd/server)
         env:
           CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          GOOS: windows
+          GOARCH: amd64
         run: |
           mkdir -p release/bin
-          go build -o "release/bin/${{ matrix.binary-name }}" .
+          go build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}" -o release/bin/stock-sim.exe ./cmd/server
 
-      - name: Package artifact
+      - name: Package portable zip
         env:
-          ARCHIVE_FORMAT: ${{ matrix.archive }}
-          TARGET_ID: ${{ matrix.id }}
-          BINARY_NAME: ${{ matrix.binary-name }}
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          PACKAGE_NAME="stock-sim-${TARGET_ID}-v${RELEASE_VERSION}"
+          PACKAGE_NAME="stock-sim-windows7-amd64-html-v${RELEASE_VERSION}"
           STAGE_DIR="release/${PACKAGE_NAME}"
-
-          mkdir -p "${STAGE_DIR}/internal/httpapi/dist"
-          mkdir -p "${STAGE_DIR}/strategies"
-
-          cp "release/bin/${BINARY_NAME}" "${STAGE_DIR}/${BINARY_NAME}"
+          mkdir -p "${STAGE_DIR}/internal/httpapi/dist" "${STAGE_DIR}/strategies"
+          cp release/bin/stock-sim.exe "${STAGE_DIR}/stock-sim.exe"
           cp -R internal/httpapi/dist/. "${STAGE_DIR}/internal/httpapi/dist/"
           cp strategies/qqq_reentry.yaml "${STAGE_DIR}/strategies/qqq_reentry.yaml"
+          ( cd release && zip -r "${PACKAGE_NAME}.zip" "${PACKAGE_NAME}" )
 
-          if [ "${ARCHIVE_FORMAT}" = "zip" ]; then
-            (
-              cd release
-              zip -r "${PACKAGE_NAME}.zip" "${PACKAGE_NAME}"
-            )
-          else
-            tar -C release -czf "release/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
-          fi
-
-      - name: Upload packaged artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.id }}
-          path: |
-            release/*.zip
-            release/*.tar.gz
+          name: windows7-amd64-html
+          path: release/*.zip
+
+  build-wails-macos:
+    needs:
+      - verify
+      - version
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.10"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Build Wails app (portable .app)
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          export PATH="${PATH}:$(go env GOPATH)/bin"
+          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}"
+
+      - name: Zip .app bundle
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cd build/bin
+          zip -r "../../stock-sim-darwin-arm64-v${RELEASE_VERSION}.zip" stock-sim.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-arm64-desktop
+          path: stock-sim-darwin-arm64-*.zip
+
+  build-wails-windows:
+    needs:
+      - verify
+      - version
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.10"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install Wails CLI
+        shell: bash
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Build Wails app
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          export PATH="${PATH}:$(go env GOPATH | tr -d '\r')/bin"
+          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}"
+
+      - name: Zip build output
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cd build/bin
+          zip -r "../../stock-sim-windows-amd64-v${RELEASE_VERSION}.zip" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64-desktop
+          path: stock-sim-windows-amd64-*.zip
 
   release:
     needs:
-      - build
+      - build-win7-html
+      - build-wails-macos
+      - build-wails-windows
       - version
     runs-on: ubuntu-latest
-
     steps:
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
@@ -203,7 +260,7 @@ jobs:
           body: |
             Official release `${{ needs.version.outputs.tag }}` for commit `${{ github.sha }}`.
 
-            Included artifacts:
-            - Windows amd64
-            - Windows 7 amd64
-            - macOS amd64
+            Artifacts:
+            - `stock-sim-darwin-arm64-*.zip` — macOS desktop app (portable .app)
+            - `stock-sim-windows-amd64-*.zip` — Windows desktop app (portable folder)
+            - `stock-sim-windows7-amd64-html-*.zip` — Windows 7+ browser bundle (`cmd/server`, no Wails)

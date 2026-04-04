@@ -1,5 +1,63 @@
+let apiBaseCache;
+let apiBaseReady;
+
+async function waitForWailsBindings() {
+  for (let i = 0; i < 80; i++) {
+    if (typeof window !== "undefined" && window.go?.main?.App) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return typeof window !== "undefined" && !!window.go?.main?.App;
+}
+
+async function resolveApiBase() {
+  if (apiBaseCache !== undefined) {
+    return apiBaseCache;
+  }
+  if (!apiBaseReady) {
+    apiBaseReady = (async () => {
+      let hasWails = typeof window !== "undefined" && !!window.go?.main?.App;
+      // Browser-only dev (npm run dev + cmd/server): Vite proxies /api → SIM_ADDR (see vite.config.js).
+      // Wails dev must use GetAPIBaseURL(): the API binds SIM_ADDR or 127.0.0.1:0 (random port), which
+      // will not match the fixed proxy port unless we always use the real origin.
+      if (import.meta.env.DEV && !hasWails) {
+        apiBaseCache = "";
+        return;
+      }
+      if (!hasWails) {
+        hasWails = await waitForWailsBindings();
+      }
+      if (!hasWails) {
+        apiBaseCache = "";
+        return;
+      }
+      const { GetAPIBaseURL } = await import("../../wailsjs/go/main/App.js");
+      let u = await GetAPIBaseURL();
+      for (let i = 0; i < 80 && !u; i++) {
+        await new Promise((r) => setTimeout(r, 25));
+        u = await GetAPIBaseURL();
+      }
+      apiBaseCache = u ? String(u).replace(/\/+$/, "") : "";
+    })();
+  }
+  await apiBaseReady;
+  return apiBaseCache;
+}
+
+function joinApi(path) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const base = apiBaseCache || "";
+  if (!base) {
+    return p;
+  }
+  return `${base}${p}`;
+}
+
 async function request(path, options = {}) {
-  const response = await fetch(path, {
+  await resolveApiBase();
+  const url = joinApi(path);
+  const response = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {})

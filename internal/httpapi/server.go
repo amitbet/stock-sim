@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,10 +24,13 @@ type Config struct {
 	DBPath        string
 	DefaultSource string
 	UIDistPath    string
+	// APIOnly registers only /api routes (no static SPA). Use when the UI is hosted elsewhere (e.g. Wails).
+	APIOnly bool
 }
 
 type Server struct {
 	httpServer       *http.Server
+	listenerAddr     net.Addr
 	stores           map[string]*data.Store
 	defaultSource    string
 	availableSources []string
@@ -80,16 +85,23 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("/api/simulations/run", api.runSimulation)
 	mux.HandleFunc("/api/simulations/batch", api.runBatch)
 
-	uiHandler, err := staticHandler(cfg.UIDistPath)
-	if err != nil {
-		return nil, err
+	if !cfg.APIOnly {
+		uiHandler, err := staticHandler(cfg.UIDistPath)
+		if err != nil {
+			return nil, err
+		}
+		mux.Handle("/", uiHandler)
 	}
-	mux.Handle("/", uiHandler)
+
+	handler := http.Handler(mux)
+	if cfg.APIOnly {
+		handler = loopbackCORS(handler)
+	}
 
 	return &Server{
 		httpServer: &http.Server{
 			Addr:    cfg.Addr,
-			Handler: mux,
+			Handler: handler,
 		},
 		stores:           stores,
 		defaultSource:    defaultSource,
@@ -98,11 +110,53 @@ func NewServer(cfg Config) (*Server, error) {
 }
 
 func (s *Server) ListenAndServe() error {
-	return s.httpServer.ListenAndServe()
+	ln, err := net.Listen("tcp", s.httpServer.Addr)
+	if err != nil {
+		return err
+	}
+	s.listenerAddr = ln.Addr()
+	return s.httpServer.Serve(ln)
+}
+
+// HTTPBaseURL returns the http:// host:port for the bound listener (e.g. for Wails), or "" if not listened yet.
+func (s *Server) HTTPBaseURL() string {
+	return tcpAddrToBaseURL(s.listenerAddr)
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.httpServer.Shutdown(ctx)
 }
 
 func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
+}
+
+func loopbackCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func tcpAddrToBaseURL(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return ""
+	}
+	host := tcp.IP.String()
+	if tcp.IP.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(tcp.Port))
 }
 
 type apiHandler struct {

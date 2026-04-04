@@ -121,6 +121,51 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(false);
   const [error, setError] = useState("");
+  const [updateStatus, setUpdateStatus] = useState(null);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [appMenuOpen, setAppMenuOpen] = useState(false);
+  const appMenuRef = useRef(null);
+  /** Latest ticker; used when fetchSymbols completes async so we preserve user choice across data source changes. */
+  const symbolRef = useRef(symbol);
+  symbolRef.current = symbol;
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      return undefined;
+    }
+    if (typeof window === "undefined" || !window.go?.main?.App) {
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { CheckForUpdates } = await import("../wailsjs/go/main/App.js");
+        const status = await CheckForUpdates();
+        if (!cancelled && status?.update_available) {
+          setUpdateStatus(status);
+        }
+      } catch {
+        /* ignore update check failures */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!appMenuOpen) {
+      return undefined;
+    }
+    function handlePointerDown(event) {
+      if (appMenuRef.current && !appMenuRef.current.contains(event.target)) {
+        setAppMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [appMenuOpen]);
 
   useEffect(() => {
     async function bootstrap() {
@@ -182,14 +227,28 @@ export default function App() {
       try {
         setError("");
         const symbolsPayload = await fetchSymbols(dataSource);
-        setSymbols(symbolsPayload.symbols || []);
-        if (symbolsPayload.symbols?.includes("QQQ")) {
-          setSymbol("QQQ");
-        } else if (symbolsPayload.symbols?.length) {
-          setSymbol(symbolsPayload.symbols[0]);
+        const list = symbolsPayload.symbols || [];
+        const prev = symbolRef.current;
+        const prevUpper = String(prev || "").toUpperCase();
+
+        let next;
+        if (!list.length) {
+          next = prevUpper || "";
         } else {
-          setSymbol("");
+          const match = list.find((s) => String(s).toUpperCase() === prevUpper);
+          if (match !== undefined) {
+            next = match;
+          } else if (prevUpper) {
+            // Yahoo preset list starts with QQQ, but the API can load any ticker — keep the user's symbol.
+            next = prevUpper;
+          } else {
+            next = list[0];
+          }
         }
+
+        const inList = list.some((s) => String(s).toUpperCase() === String(next).toUpperCase());
+        setSymbols(inList ? list : [next, ...list]);
+        setSymbol(next);
       } catch (err) {
         setError(err.message);
       }
@@ -411,6 +470,22 @@ export default function App() {
     return () => window.clearTimeout(timeoutId);
   }, [executionMode, holdDaysOverride, multiSelectEnabled, planText, referencePrice, referencePriceError, referencePriceMode, selectedDate]);
 
+  async function handleApplyUpdate() {
+    setUpdateBusy(true);
+    setError("");
+    setAppMenuOpen(false);
+    try {
+      const { ApplyUpdateAndRestart } = await import("../wailsjs/go/main/App.js");
+      await ApplyUpdateAndRestart();
+    } catch (err) {
+      setError(err?.message || String(err));
+      setUpdateBusy(false);
+    }
+  }
+
+  const showUpdateChrome =
+    !import.meta.env.DEV && typeof window !== "undefined" && Boolean(window.go?.main?.App) && updateStatus?.update_available;
+
   return (
     <div className="app-shell">
       <header className="hero">
@@ -419,21 +494,78 @@ export default function App() {
           <h1>Stock Simulator</h1>
           <p>Click a sell date, replay staged re-entry, compare outcomes.</p>
         </div>
-        <div className="hero-card">
-          <div className="hero-metric">
-            <span>Symbol</span>
-            <strong>{symbol || "--"}</strong>
-          </div>
-          <div className="hero-metric">
-            <span>Bars loaded</span>
-            <strong>{bars.length}</strong>
-          </div>
-          <div className="hero-metric">
-            <span>Batch picks</span>
-            <strong>{selectedBatchCount}</strong>
+        <div className="hero-right">
+          {showUpdateChrome ? (
+            <div className="app-menu-wrap" ref={appMenuRef}>
+              <button
+                type="button"
+                className="app-menu-trigger"
+                aria-expanded={appMenuOpen}
+                aria-haspopup="menu"
+                aria-label="App menu"
+                onClick={() => setAppMenuOpen((o) => !o)}
+              >
+                ⋮
+              </button>
+              {appMenuOpen ? (
+                <ul className="app-menu-dropdown" role="menu">
+                  <li className="app-menu-heading" role="presentation">
+                    Update available
+                  </li>
+                  <li role="none">
+                    <button
+                      type="button"
+                      className="app-menu-item"
+                      role="menuitem"
+                      disabled={updateBusy}
+                      onClick={() => void handleApplyUpdate()}
+                    >
+                      {updateBusy ? "Updating…" : `Update to ${updateStatus.latest}`}
+                    </button>
+                  </li>
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="hero-card">
+            <div className="hero-metric">
+              <span>Symbol</span>
+              <strong>{symbol || "--"}</strong>
+            </div>
+            <div className="hero-metric">
+              <span>Bars loaded</span>
+              <strong>{bars.length}</strong>
+            </div>
+            <div className="hero-metric">
+              <span>Batch picks</span>
+              <strong>{selectedBatchCount}</strong>
+            </div>
           </div>
         </div>
       </header>
+
+      {updateStatus?.update_available && !updateBannerDismissed ? (
+        <div className="update-banner" role="status">
+          <span>
+            A new version is available: <strong>{updateStatus.latest}</strong> (you have {updateStatus.current}).
+          </span>
+          <div className="update-banner-actions">
+            <button type="button" className="update-banner-primary" disabled={updateBusy} onClick={() => void handleApplyUpdate()}>
+              {updateBusy ? "Updating…" : "Update"}
+            </button>
+            <button
+              type="button"
+              className="update-banner-dismiss"
+              disabled={updateBusy}
+              onClick={() => {
+                setUpdateBannerDismissed(true);
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {error ? <div className="error-banner">{error}</div> : null}
 
