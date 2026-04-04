@@ -89,7 +89,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go (Win7 / static binary)
+      - name: Set up Go (Windows static binary, cmd/server)
         uses: actions/setup-go@v5
         with:
           go-version: "1.20.14"
@@ -116,7 +116,8 @@ jobs:
           GOARCH: amd64
         run: |
           mkdir -p release/bin
-          go build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}" -o release/bin/stock-sim.exe ./cmd/server
+          cp go.sum go.win7.sum
+          go build -modfile=go.win7.mod -mod=mod -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}" -o release/bin/stock-sim.exe ./cmd/server
 
       - name: Package portable zip
         env:
@@ -243,11 +244,33 @@ jobs:
       - version
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
           merge-multiple: true
+
+      - name: Write release notes
+        shell: bash
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "Official release \`${TAG}\` for commit [\`${SHA}\`](https://github.com/${{ github.repository }}/commit/${SHA})."
+            echo ""
+            echo "### Commit message"
+            echo ""
+            git log -1 --pretty=%B "${SHA}"
+            echo ""
+            echo "### Artifacts"
+            echo "- \`stock-sim-darwin-arm64-*.zip\` — macOS desktop app (portable .app)"
+            echo "- \`stock-sim-windows-amd64-*.zip\` — Windows desktop app (portable folder)"
+            echo "- \`stock-sim-windows7-amd64-html-*.zip\` — Windows 7+ browser bundle (\`cmd/server\`, no Wails)"
+          } > release-notes.md
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -257,10 +280,4 @@ jobs:
           name: Release ${{ needs.version.outputs.tag }}
           make_latest: true
           files: release-artifacts/*
-          body: |
-            Official release `${{ needs.version.outputs.tag }}` for commit `${{ github.sha }}`.
-
-            Artifacts:
-            - `stock-sim-darwin-arm64-*.zip` — macOS desktop app (portable .app)
-            - `stock-sim-windows-amd64-*.zip` — Windows desktop app (portable folder)
-            - `stock-sim-windows7-amd64-html-*.zip` — Windows 7+ browser bundle (`cmd/server`, no Wails)
+          body_path: release-notes.md
