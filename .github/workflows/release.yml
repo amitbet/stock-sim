@@ -117,7 +117,7 @@ jobs:
         run: |
           mkdir -p release/bin
           cp go.sum go.win7.sum
-          go build -modfile=go.win7.mod -mod=mod -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}" -o release/bin/stock-sim.exe ./cmd/server
+          go build -modfile=go.win7.mod -mod=mod -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -o release/bin/stock-sim.exe ./cmd/server
 
       - name: Package portable zip
         env:
@@ -170,7 +170,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           export PATH="${PATH}:$(go env GOPATH)/bin"
-          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}" -platform darwin/arm64
+          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -platform darwin/arm64
 
       - name: Zip .app bundle
         env:
@@ -218,7 +218,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           export PATH="${PATH}:$(go env GOPATH)/bin"
-          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}" -platform darwin/amd64
+          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -platform darwin/amd64
 
       - name: Zip .app bundle
         env:
@@ -268,7 +268,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           export PATH="${PATH}:$(go env GOPATH | tr -d '\r')/bin"
-          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }}" -platform windows/amd64
+          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -platform windows/amd64
 
       - name: Zip build output
         shell: pwsh

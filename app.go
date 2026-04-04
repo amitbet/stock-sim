@@ -89,7 +89,7 @@ func (a *App) CheckForUpdates() (*updater.Status, error) {
 }
 
 // ApplyUpdateAndRestart downloads the latest Wails zip for this OS/arch from GitHub, replaces the install, and quits.
-// Set STOCK_SIM_UPDATE_REPO=owner/repo (or GITHUB_REPOSITORY). Requires a semver release build (not "dev").
+// Set STOCK_SIM_UPDATE_REPO=owner/repo to override; release builds embed the repo via ldflags. Requires semver (not "dev").
 func (a *App) ApplyUpdateAndRestart() error {
 	if a.ctx == nil {
 		return errors.New("app not ready")

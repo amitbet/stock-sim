@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/mod/semver"
+
+	"stock-sim/internal/version"
 )
 
 // Release holds GitHub GET /releases/latest payload fields we need.
@@ -31,7 +33,10 @@ func repoFromEnv() (string, error) {
 		repo = strings.TrimSpace(os.Getenv("GITHUB_REPOSITORY"))
 	}
 	if repo == "" {
-		return "", fmt.Errorf("set STOCK_SIM_UPDATE_REPO=owner/repo (or run under GITHUB_REPOSITORY) for updates")
+		repo = strings.TrimSpace(version.UpdateRepo)
+	}
+	if repo == "" {
+		return "", fmt.Errorf("set STOCK_SIM_UPDATE_REPO=owner/repo (or build with -X stock-sim/internal/version.UpdateRepo=...) for updates")
 	}
 	return repo, nil
 }
