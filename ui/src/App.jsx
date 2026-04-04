@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import BatchReportModal from "./components/BatchReportModal.jsx";
 import CandleChart from "./components/CandleChart.jsx";
 import Controls from "./components/Controls.jsx";
@@ -17,8 +17,25 @@ import {
 
 const AUTO_RUN_DEBOUNCE_MS = 350;
 
+/** Desktop-only: GitHub release check on load and on this interval (ms). */
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
+const THEME_STORAGE_KEY = "stock-sim-theme";
+
 /** Injected in vite.config.js from package.json (always available in dev/build). */
 const UI_PKG_VERSION = import.meta.env.VITE_UI_PKG_VERSION || "";
+
+function readStoredTheme() {
+  try {
+    const v = localStorage.getItem(THEME_STORAGE_KEY);
+    if (v === "light" || v === "dark") {
+      return v;
+    }
+  } catch {
+    /* ignore */
+  }
+  return "dark";
+}
 
 function formatISODate(value) {
   return value.toISOString().slice(0, 10);
@@ -99,6 +116,23 @@ function downloadTextFile(filename, content) {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState(() => {
+    const t = readStoredTheme();
+    if (typeof document !== "undefined") {
+      document.documentElement.dataset.theme = t;
+    }
+    return t;
+  });
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
+
   const fileInputRef = useRef(null);
   const latestSingleRunIdRef = useRef(0);
   const autoRunKeyRef = useRef("");
@@ -194,6 +228,12 @@ export default function App() {
       return undefined;
     }
     void refreshUpdateStatus();
+    const id = window.setInterval(() => {
+      void refreshUpdateStatus();
+    }, UPDATE_CHECK_INTERVAL_MS);
+    return () => {
+      window.clearInterval(id);
+    };
   }, [isDesktopApp, refreshUpdateStatus]);
 
   useEffect(() => {
@@ -520,6 +560,19 @@ export default function App() {
           <p>Click a sell date, replay staged re-entry, compare outcomes.</p>
         </div>
         <div className="hero-right">
+          <button
+            type="button"
+            className="theme-switch"
+            role="switch"
+            aria-checked={theme === "light"}
+            aria-label={theme === "light" ? "Use dark theme" : "Use light theme"}
+            onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+          >
+            <span className="theme-switch-track" aria-hidden>
+              <span className="theme-switch-thumb" />
+            </span>
+            <span className="theme-switch-label">{theme === "light" ? "Light" : "Dark"}</span>
+          </button>
           <div className="hero-card">
             <div className="hero-metric">
               <span>Symbol</span>
@@ -578,6 +631,7 @@ export default function App() {
             onSelectDate={handleSelectDate}
             actions={actionOverlay}
             endDate={endDate}
+            theme={theme}
           />
         </section>
 

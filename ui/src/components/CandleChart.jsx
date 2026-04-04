@@ -32,7 +32,8 @@ export default function CandleChart({
   multiSelectEnabled,
   onSelectDate,
   actions,
-  endDate
+  endDate,
+  theme = "dark"
 }) {
   const hostRef = useRef(null);
   const chartRef = useRef(null);
@@ -118,6 +119,24 @@ export default function CandleChart({
       markersRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!chartRef.current) {
+      return;
+    }
+    const isLight = theme === "light";
+    chartRef.current.applyOptions({
+      layout: {
+        background: { color: isLight ? "#ffffff" : "#0d1b2a" },
+        textColor: isLight ? "#1e293b" : "#dfe7ef",
+        fontFamily: "IBM Plex Sans, sans-serif"
+      },
+      grid: {
+        vertLines: { color: isLight ? "rgba(15, 23, 42, 0.09)" : "rgba(255, 255, 255, 0.07)" },
+        horzLines: { color: isLight ? "rgba(15, 23, 42, 0.09)" : "rgba(255, 255, 255, 0.07)" }
+      }
+    });
+  }, [theme]);
 
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) {
