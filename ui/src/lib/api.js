@@ -19,23 +19,42 @@ async function request(path, options = {}) {
   return payload;
 }
 
-export function fetchSymbols() {
-  return request("/api/symbols");
+export function fetchDataSources() {
+  return request("/api/data-sources");
 }
 
-export function fetchBars(symbol, from, to) {
+export function fetchSymbols(source) {
+  const params = new URLSearchParams();
+  if (source) {
+    params.set("source", source);
+  }
+  return request(`/api/symbols?${params.toString()}`);
+}
+
+export function fetchBars(source, symbol, from, to) {
   const params = new URLSearchParams({ symbol, from, to });
+  if (source) {
+    params.set("source", source);
+  }
   return request(`/api/bars?${params.toString()}`);
+}
+
+export function fetchSymbolInfo(source, symbol) {
+  const params = new URLSearchParams({ symbol });
+  if (source) {
+    params.set("source", source);
+  }
+  return request(`/api/symbol-info?${params.toString()}`);
 }
 
 export function fetchDefaultPlan() {
   return request("/api/default-plan");
 }
 
-export function validatePlan(symbol, plan) {
+export function validatePlan(source, symbol, plan) {
   return request("/api/plans/validate", {
     method: "POST",
-    body: JSON.stringify({ symbol, plan })
+    body: JSON.stringify({ data_source: source, symbol, plan })
   });
 }
 

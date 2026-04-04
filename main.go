@@ -23,24 +23,37 @@ import (
 const managedDBPrefix = "stock-sim-"
 
 func main() {
+	dataSource := strings.TrimSpace(os.Getenv("SIM_DATA_SOURCE"))
+	dbPath := os.Getenv("SIM_DB_PATH")
 	defaultDBPath, searchRoots, found := discoverDefaultDBPath()
-	sourceDBPath := os.Getenv("SIM_DB_PATH")
-	if sourceDBPath == "" {
-		if !found {
-			log.Fatalf("no sqlite database found. Searched: %s. Put a .sqlite/.sqlite3/.db file next to the binary, in its parent directory, or in a sibling directory, or set SIM_DB_PATH.", strings.Join(searchRoots, ", "))
-		}
+	sourceDBPath := dbPath
+	if sourceDBPath == "" && found {
 		sourceDBPath = defaultDBPath
 	}
+	if sourceDBPath != "" {
+		var err error
+		dbPath, err = prepareManagedDB(sourceDBPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 
-	dbPath, err := prepareManagedDB(sourceDBPath)
-	if err != nil {
-		log.Fatal(err)
+	if dataSource == "" {
+		if dbPath != "" {
+			dataSource = "sqlite"
+		} else {
+			dataSource = "yahoo"
+		}
+	}
+	if dbPath == "" && strings.EqualFold(dataSource, "sqlite") {
+		log.Fatalf("no sqlite database found. Searched: %s. Put a .sqlite/.sqlite3/.db file next to the binary, in its parent directory, or in a sibling directory, or set SIM_DB_PATH.", strings.Join(searchRoots, ", "))
 	}
 
 	cfg := httpapi.Config{
-		Addr:       envOrDefault("SIM_ADDR", ":3002"),
-		DBPath:     dbPath,
-		UIDistPath: envOrDefault("SIM_UI_DIST", "internal/httpapi/dist"),
+		Addr:          envOrDefault("SIM_ADDR", ":3002"),
+		DBPath:        dbPath,
+		DefaultSource: dataSource,
+		UIDistPath:    envOrDefault("SIM_UI_DIST", "internal/httpapi/dist"),
 	}
 
 	server, err := httpapi.NewServer(cfg)
@@ -51,7 +64,7 @@ func main() {
 	url := browserURL(cfg.Addr)
 	go openBrowserWhenReady(url)
 
-	log.Printf("stock-sim listening on %s using staged db %s (source %s)", cfg.Addr, cfg.DBPath, sourceDBPath)
+	log.Printf("stock-sim listening on %s using data source %s", cfg.Addr, cfg.DBPath)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

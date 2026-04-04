@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 export default function Controls({
+  dataSources,
+  dataSource,
+  onDataSourceChange,
+  symbolDescription,
   symbols,
   symbol,
   onSymbolChange,
@@ -49,10 +53,27 @@ export default function Controls({
     return [...startsWith, ...contains].slice(0, 50);
   }, [symbols, query]);
 
+  const normalizedQuery = query.trim().toUpperCase();
+  const hasExactMatch = normalizedQuery ? symbols.some((item) => item.toUpperCase() === normalizedQuery) : false;
+
   function selectSymbol(nextSymbol) {
     setQuery(nextSymbol);
     setOpen(false);
     onSymbolChange(nextSymbol);
+  }
+
+  function commitTypedSymbol() {
+    if (filteredSymbols.length > 0) {
+      selectSymbol(filteredSymbols[0]);
+      return;
+    }
+
+    if (!normalizedQuery) {
+      setQuery(symbol);
+      setOpen(false);
+      return;
+    }
+    selectSymbol(normalizedQuery);
   }
 
   return (
@@ -66,6 +87,17 @@ export default function Controls({
 
       <div className="form-grid">
         <label>
+          Data source
+          <select value={dataSource} onChange={(event) => onDataSourceChange(event.target.value)}>
+            {dataSources.map((source) => (
+              <option key={source} value={source}>
+                {source}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
           Symbol
           <div className="symbol-combobox">
             <input
@@ -74,6 +106,12 @@ export default function Controls({
               onChange={(event) => {
                 setQuery(event.target.value.toUpperCase());
                 setOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitTypedSymbol();
+                }
               }}
               onFocus={() => setOpen(true)}
               onBlur={() => {
@@ -87,6 +125,16 @@ export default function Controls({
             />
             {open ? (
               <div className="symbol-menu">
+                {normalizedQuery && !hasExactMatch ? (
+                  <button
+                    type="button"
+                    className="symbol-option"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={commitTypedSymbol}
+                  >
+                    Use {normalizedQuery}
+                  </button>
+                ) : null}
                 {filteredSymbols.length > 0 ? (
                   filteredSymbols.map((item) => (
                     <button
@@ -99,12 +147,13 @@ export default function Controls({
                       {item}
                     </button>
                   ))
-                ) : (
+                ) : normalizedQuery && !hasExactMatch ? null : (
                   <div className="symbol-empty">No matching symbol</div>
                 )}
               </div>
             ) : null}
           </div>
+          {symbolDescription ? <span className="field-hint">{symbolDescription}</span> : null}
         </label>
 
         <label>

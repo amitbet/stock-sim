@@ -18,30 +18,63 @@ import (
 )
 
 type Config struct {
-	Addr       string
-	DBPath     string
-	UIDistPath string
+	Addr          string
+	DBPath        string
+	DefaultSource string
+	UIDistPath    string
 }
 
 type Server struct {
-	httpServer *http.Server
-	store      *data.Store
+	httpServer       *http.Server
+	stores           map[string]*data.Store
+	defaultSource    string
+	availableSources []string
 }
 
 //go:embed dist/*
 var embeddedUIDist embed.FS
 
 func NewServer(cfg Config) (*Server, error) {
-	store, err := data.NewStore(cfg.DBPath)
-	if err != nil {
-		return nil, err
+	stores := make(map[string]*data.Store)
+	availableSources := make([]string, 0, 3)
+
+	if cfg.DBPath != "" {
+		store, err := data.NewStore(cfg.DBPath)
+		if err != nil {
+			return nil, err
+		}
+		stores["sqlite"] = store
+		availableSources = append(availableSources, "sqlite")
+	}
+
+	for _, source := range []string{"yahoo"} {
+		store, err := data.NewStore(source)
+		if err != nil {
+			return nil, err
+		}
+		stores[source] = store
+		availableSources = append(availableSources, source)
+	}
+
+	defaultSource := cfg.DefaultSource
+	if defaultSource == "" {
+		defaultSource = "sqlite"
+	}
+	if _, ok := stores[defaultSource]; !ok && len(availableSources) > 0 {
+		defaultSource = availableSources[0]
 	}
 
 	mux := http.NewServeMux()
-	api := &apiHandler{store: store}
+	api := &apiHandler{
+		stores:           stores,
+		defaultSource:    defaultSource,
+		availableSources: availableSources,
+	}
 	mux.HandleFunc("/api/health", api.health)
 	mux.HandleFunc("/api/default-plan", api.defaultPlan)
+	mux.HandleFunc("/api/data-sources", api.dataSources)
 	mux.HandleFunc("/api/symbols", api.symbols)
+	mux.HandleFunc("/api/symbol-info", api.symbolInfo)
 	mux.HandleFunc("/api/bars", api.bars)
 	mux.HandleFunc("/api/plans/validate", api.validatePlan)
 	mux.HandleFunc("/api/simulations/run", api.runSimulation)
@@ -58,7 +91,9 @@ func NewServer(cfg Config) (*Server, error) {
 			Addr:    cfg.Addr,
 			Handler: mux,
 		},
-		store: store,
+		stores:           stores,
+		defaultSource:    defaultSource,
+		availableSources: availableSources,
 	}, nil
 }
 
@@ -71,7 +106,9 @@ func (s *Server) Handler() http.Handler {
 }
 
 type apiHandler struct {
-	store *data.Store
+	stores           map[string]*data.Store
+	defaultSource    string
+	availableSources []string
 }
 
 func (h *apiHandler) health(w http.ResponseWriter, _ *http.Request) {
@@ -82,12 +119,28 @@ func (h *apiHandler) defaultPlan(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"plan": plan.DefaultQQQPlanYAML})
 }
 
+func (h *apiHandler) dataSources(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"default_source": h.defaultSource,
+		"sources":        h.availableSources,
+	})
+}
+
 func (h *apiHandler) symbols(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
 		return
 	}
-	symbols, err := h.store.ListSymbols(r.Context())
+	store, err := h.storeForRequest(r.URL.Query().Get("source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	symbols, err := store.ListSymbols(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -113,12 +166,44 @@ func (h *apiHandler) bars(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bars, err := h.store.LoadBars(r.Context(), symbol, from, to)
+	store, err := h.storeForRequest(r.URL.Query().Get("source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	bars, err := store.LoadBars(r.Context(), symbol, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"bars": bars})
+}
+
+func (h *apiHandler) symbolInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	symbol := strings.TrimSpace(r.URL.Query().Get("symbol"))
+	if symbol == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("symbol is required"))
+		return
+	}
+
+	store, err := h.storeForRequest(r.URL.Query().Get("source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	info, err := store.SymbolInfo(r.Context(), symbol)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"info": info})
 }
 
 func (h *apiHandler) validatePlan(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +218,7 @@ func (h *apiHandler) validatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parsed, validation, err := h.parseAndValidate(r.Context(), body.Symbol, body.Plan)
+	parsed, validation, err := h.parseAndValidate(r.Context(), body.DataSource, body.Symbol, body.Plan)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -161,6 +246,7 @@ func (h *apiHandler) runSimulation(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.executeOne(
 		r.Context(),
+		body.DataSource,
 		body.Symbol,
 		body.ReferenceSellDate,
 		body.Plan,
@@ -176,6 +262,7 @@ func (h *apiHandler) runSimulation(w http.ResponseWriter, r *http.Request) {
 	if body.HoldDaysAfterFullInvest != nil {
 		result, err = h.executeOneWithHoldOverride(
 			r.Context(),
+			body.DataSource,
 			body.Symbol,
 			body.ReferenceSellDate,
 			body.Plan,
@@ -208,6 +295,7 @@ func (h *apiHandler) runBatch(w http.ResponseWriter, r *http.Request) {
 	for _, dateString := range body.ReferenceSellDates {
 		run, err := h.executeOneWithHoldOverride(
 			r.Context(),
+			body.DataSource,
 			body.Symbol,
 			dateString,
 			body.Plan,
@@ -225,18 +313,25 @@ func (h *apiHandler) runBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *apiHandler) executeOne(ctx context.Context, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, referencePriceMode sim.ReferencePriceMode, referencePriceOverride *float64) (sim.Result, error) {
-	return h.executeOneWithHoldOverride(ctx, symbol, referenceSellDate, rawPlan, mode, referencePriceMode, referencePriceOverride, nil)
+func (h *apiHandler) executeOne(ctx context.Context, dataSource, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, referencePriceMode sim.ReferencePriceMode, referencePriceOverride *float64) (sim.Result, error) {
+	return h.executeOneWithHoldOverride(ctx, dataSource, symbol, referenceSellDate, rawPlan, mode, referencePriceMode, referencePriceOverride, nil)
 }
 
-func (h *apiHandler) executeOneWithHoldOverride(ctx context.Context, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, referencePriceMode sim.ReferencePriceMode, referencePriceOverride *float64, holdDaysOverride *int) (sim.Result, error) {
+func (h *apiHandler) executeOneWithHoldOverride(ctx context.Context, dataSource, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, referencePriceMode sim.ReferencePriceMode, referencePriceOverride *float64, holdDaysOverride *int) (sim.Result, error) {
+	const preReferenceLookbackDays = 360
+
 	var result sim.Result
 	refDate, err := time.Parse("2006-01-02", referenceSellDate)
 	if err != nil {
 		return result, fmt.Errorf("invalid reference_sell_date")
 	}
 
-	parsed, validation, err := h.parseAndValidate(ctx, symbol, rawPlan)
+	store, err := h.storeForRequest(dataSource)
+	if err != nil {
+		return result, err
+	}
+
+	parsed, validation, err := h.parseAndValidateWithStore(ctx, store, symbol, rawPlan)
 	if err != nil {
 		return result, err
 	}
@@ -248,7 +343,12 @@ func (h *apiHandler) executeOneWithHoldOverride(ctx context.Context, symbol, ref
 		parsed.Exit.HoldDaysAfterFullInvest = &override
 	}
 
-	bars, err := h.store.LoadBarsAround(ctx, symbol, refDate, 180, 200)
+	bars, err := store.LoadBars(
+		ctx,
+		symbol,
+		refDate.AddDate(0, 0, -preReferenceLookbackDays),
+		time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
+	)
 	if err != nil {
 		return result, err
 	}
@@ -282,14 +382,22 @@ func validateReferencePriceOverride(bars []data.Bar, refDate time.Time, referenc
 	return fmt.Errorf("reference sell date %s not found in bar set", refDate.Format("2006-01-02"))
 }
 
-func (h *apiHandler) parseAndValidate(ctx context.Context, symbol, rawPlan string) (plan.StrategyPlan, plan.ValidationResult, error) {
+func (h *apiHandler) parseAndValidate(ctx context.Context, dataSource, symbol, rawPlan string) (plan.StrategyPlan, plan.ValidationResult, error) {
+	store, err := h.storeForRequest(dataSource)
+	if err != nil {
+		return plan.StrategyPlan{}, plan.ValidationResult{}, err
+	}
+	return h.parseAndValidateWithStore(ctx, store, symbol, rawPlan)
+}
+
+func (h *apiHandler) parseAndValidateWithStore(ctx context.Context, store *data.Store, symbol, rawPlan string) (plan.StrategyPlan, plan.ValidationResult, error) {
 	parsed, err := plan.Parse(rawPlan)
 	if err != nil {
 		return parsed, plan.ValidationResult{}, err
 	}
 
 	// Use a generous range to validate indicator windows without requiring the run date yet.
-	bars, err := h.store.LoadBars(ctx, symbol, time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+	bars, err := store.LoadBars(ctx, symbol, time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		return parsed, plan.ValidationResult{}, err
 	}
@@ -298,12 +406,26 @@ func (h *apiHandler) parseAndValidate(ctx context.Context, symbol, rawPlan strin
 	return parsed, validation, nil
 }
 
+func (h *apiHandler) storeForRequest(source string) (*data.Store, error) {
+	normalized := strings.ToLower(strings.TrimSpace(source))
+	if normalized == "" {
+		normalized = h.defaultSource
+	}
+	store, ok := h.stores[normalized]
+	if !ok {
+		return nil, fmt.Errorf("unsupported data source %q", normalized)
+	}
+	return store, nil
+}
+
 type planRequest struct {
-	Symbol string `json:"symbol"`
-	Plan   string `json:"plan"`
+	DataSource string `json:"data_source,omitempty"`
+	Symbol     string `json:"symbol"`
+	Plan       string `json:"plan"`
 }
 
 type simulationRequest struct {
+	DataSource              string                 `json:"data_source,omitempty"`
 	Symbol                  string                 `json:"symbol"`
 	ReferenceSellDate       string                 `json:"reference_sell_date"`
 	Plan                    string                 `json:"plan"`
@@ -314,6 +436,7 @@ type simulationRequest struct {
 }
 
 type batchSimulationRequest struct {
+	DataSource              string                 `json:"data_source,omitempty"`
 	Symbol                  string                 `json:"symbol"`
 	ReferenceSellDates      []string               `json:"reference_sell_dates"`
 	Plan                    string                 `json:"plan"`

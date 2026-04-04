@@ -6,16 +6,30 @@ import PlanEditor from "./components/PlanEditor.jsx";
 import ResultsPanel from "./components/ResultsPanel.jsx";
 import {
   fetchBars,
+  fetchDataSources,
   fetchDefaultPlan,
+  fetchSymbolInfo,
   fetchSymbols,
   runBatchSimulation,
   runSimulation,
   validatePlan
 } from "./lib/api.js";
 
-const RANGE_FROM = "2023-01-01";
-const RANGE_TO = "2026-12-31";
 const AUTO_RUN_DEBOUNCE_MS = 350;
+
+function formatISODate(value) {
+  return value.toISOString().slice(0, 10);
+}
+
+function historyRange() {
+  const today = new Date();
+  const to = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const from = new Date(Date.UTC(to.getUTCFullYear() - 30, to.getUTCMonth(), to.getUTCDate()));
+  return {
+    from: formatISODate(from),
+    to: formatISODate(to)
+  };
+}
 
 function normalizeBarDate(value) {
   return value ? String(value).slice(0, 10) : "";
@@ -85,8 +99,11 @@ export default function App() {
   const fileInputRef = useRef(null);
   const latestSingleRunIdRef = useRef(0);
   const autoRunKeyRef = useRef("");
+  const [dataSources, setDataSources] = useState([]);
+  const [dataSource, setDataSource] = useState("");
   const [symbols, setSymbols] = useState([]);
   const [symbol, setSymbol] = useState("QQQ");
+  const [symbolDescription, setSymbolDescription] = useState("");
   const [bars, setBars] = useState([]);
   const [planText, setPlanText] = useState("");
   const [validation, setValidation] = useState(null);
@@ -110,22 +127,23 @@ export default function App() {
       let nextError = "";
 
       try {
+        const sourcePayload = await fetchDataSources();
+        const nextSources = sourcePayload.sources || [];
+        setDataSources(nextSources);
+        if (sourcePayload.default_source) {
+          setDataSource(sourcePayload.default_source);
+        } else if (nextSources.length > 0) {
+          setDataSource(nextSources[0]);
+        }
+      } catch (err) {
+        nextError = nextError || err.message;
+      }
+
+      try {
         const planPayload = await fetchDefaultPlan();
         setPlanText(planPayload.plan || "");
       } catch (err) {
         nextError = err.message;
-      }
-
-      try {
-        const symbolsPayload = await fetchSymbols();
-        setSymbols(symbolsPayload.symbols || []);
-        if (symbolsPayload.symbols?.includes("QQQ")) {
-          setSymbol("QQQ");
-        } else if (symbolsPayload.symbols?.length) {
-          setSymbol(symbolsPayload.symbols[0]);
-        }
-      } catch (err) {
-        nextError = nextError || err.message;
       }
 
       if (nextError) {
@@ -136,13 +154,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!symbol) {
+    if (!symbol || !dataSource) {
       return;
     }
     async function loadBars() {
       try {
         setError("");
-        const payload = await fetchBars(symbol, RANGE_FROM, RANGE_TO);
+        const range = historyRange();
+        const payload = await fetchBars(dataSource, symbol, range.from, range.to);
         setBars(payload.bars || []);
         setSelectedDate("");
         setReferencePrice("");
@@ -153,7 +172,57 @@ export default function App() {
       }
     }
     loadBars();
-  }, [symbol]);
+  }, [dataSource, symbol]);
+
+  useEffect(() => {
+    if (!dataSource) {
+      return;
+    }
+    async function loadSymbols() {
+      try {
+        setError("");
+        const symbolsPayload = await fetchSymbols(dataSource);
+        setSymbols(symbolsPayload.symbols || []);
+        if (symbolsPayload.symbols?.includes("QQQ")) {
+          setSymbol("QQQ");
+        } else if (symbolsPayload.symbols?.length) {
+          setSymbol(symbolsPayload.symbols[0]);
+        } else {
+          setSymbol("");
+        }
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+    loadSymbols();
+  }, [dataSource]);
+
+  useEffect(() => {
+    if (!symbol) {
+      setSymbolDescription("");
+      return;
+    }
+
+    let cancelled = false;
+    async function loadSymbolInfo() {
+      try {
+        const payload = await fetchSymbolInfo(dataSource, symbol);
+        if (!cancelled) {
+          const info = payload.info || {};
+          setSymbolDescription(info.description || info.name || "");
+        }
+      } catch {
+        if (!cancelled) {
+          setSymbolDescription("");
+        }
+      }
+    }
+    loadSymbolInfo();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataSource, symbol]);
 
   const selectedBatchCount = multiSelectedDates.length;
   const selectedBar = useMemo(() => findBarForDate(bars, selectedDate), [bars, selectedDate]);
@@ -169,7 +238,7 @@ export default function App() {
   async function handleValidate() {
     setValidating(true);
     try {
-      const payload = await validatePlan(symbol, planText);
+      const payload = await validatePlan(dataSource, symbol, planText);
       setValidation(payload);
       setError("");
     } catch (err) {
@@ -201,6 +270,7 @@ export default function App() {
     try {
       const payload = await runSimulation({
         symbol,
+        data_source: dataSource,
         reference_sell_date: date,
         plan: planText,
         execution_price_mode: executionMode,
@@ -238,6 +308,7 @@ export default function App() {
     try {
       const payload = await runBatchSimulation({
         symbol,
+        data_source: dataSource,
         reference_sell_dates: multiSelectedDates,
         plan: planText,
         execution_price_mode: executionMode,
@@ -388,6 +459,10 @@ export default function App() {
         <aside className="sidebar-scroll" aria-label="Simulation controls and results">
           <div className="side-grid">
             <Controls
+              dataSources={dataSources}
+              dataSource={dataSource}
+              onDataSourceChange={setDataSource}
+              symbolDescription={symbolDescription}
               symbols={symbols}
               symbol={symbol}
               onSymbolChange={setSymbol}
