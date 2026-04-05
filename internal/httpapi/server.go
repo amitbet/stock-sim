@@ -17,8 +17,6 @@ import (
 	"stock-sim/internal/data"
 	"stock-sim/internal/plan"
 	"stock-sim/internal/sim"
-	"stock-sim/internal/updater"
-	"stock-sim/internal/version"
 )
 
 type Config struct {
@@ -78,9 +76,6 @@ func NewServer(cfg Config) (*Server, error) {
 		availableSources: availableSources,
 	}
 	mux.HandleFunc("/api/health", api.health)
-	mux.HandleFunc("/api/app/version", api.appVersion)
-	mux.HandleFunc("/api/app/update-status", api.updateStatus)
-	mux.HandleFunc("/api/app/apply-update", api.applyUpdate)
 	mux.HandleFunc("/api/default-plan", api.defaultPlan)
 	mux.HandleFunc("/api/data-sources", api.dataSources)
 	mux.HandleFunc("/api/symbols", api.symbols)
@@ -172,46 +167,6 @@ type apiHandler struct {
 
 func (h *apiHandler) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-func (h *apiHandler) appVersion(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": version.Version})
-}
-
-func (h *apiHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	status, err := updater.Check(version.Version)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, status)
-}
-
-func (h *apiHandler) applyUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if err := updater.Apply(version.Version); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"ok":      true,
-		"message": "Update started. The app will close shortly to finish installation.",
-	})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		os.Exit(0)
-	}()
 }
 
 func (h *apiHandler) defaultPlan(w http.ResponseWriter, _ *http.Request) {

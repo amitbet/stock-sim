@@ -116,20 +116,6 @@ export function fetchDefaultPlan() {
   return request("/api/default-plan");
 }
 
-export function fetchAppVersion() {
-  return request("/api/app/version");
-}
-
-export function fetchUpdateStatus() {
-  return request("/api/app/update-status");
-}
-
-export function applyBrowserUpdate() {
-  return request("/api/app/apply-update", {
-    method: "POST"
-  });
-}
-
 export function validatePlan(source, symbol, plan) {
   return request("/api/plans/validate", {
     method: "POST",
