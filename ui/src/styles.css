@@ -237,6 +237,7 @@ html[data-theme="light"] .theme-switch-track {
   min-height: 0;
   overflow-y: auto;
   padding-right: 6px;
+  padding-bottom: 16px;
 }
 
 .side-grid {
@@ -619,6 +620,28 @@ html[data-theme="light"] .selected-row {
 
 .pending-triggers-section {
   margin-top: 24px;
+}
+
+.results-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.results-panel-body {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.results-panel .panel-header {
+  flex-shrink: 0;
+}
+
+.results-panel .table-scroll,
+.results-panel .pending-triggers-section {
+  min-width: 0;
 }
 
 .pending-triggers-header {
