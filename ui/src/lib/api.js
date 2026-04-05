@@ -1,5 +1,17 @@
 let apiBaseCache;
 let apiBaseReady;
+const REQUEST_TIMEOUT_MS = 15_000;
+const RECOVERY_TIMEOUT_MS = 45_000;
+const RECOVERY_POLL_MS = 750;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clearApiBaseCache() {
+  apiBaseCache = undefined;
+  apiBaseReady = undefined;
+}
 
 async function waitForWailsBindings() {
   for (let i = 0; i < 80; i++) {
@@ -11,7 +23,11 @@ async function waitForWailsBindings() {
   return typeof window !== "undefined" && !!window.go?.main?.App;
 }
 
-async function resolveApiBase() {
+async function resolveApiBase(options = {}) {
+  const forceRefresh = options.forceRefresh === true;
+  if (forceRefresh) {
+    clearApiBaseCache();
+  }
   if (apiBaseCache !== undefined) {
     return apiBaseCache;
   }
@@ -61,10 +77,55 @@ function joinApi(path) {
   return `${base}${p}`;
 }
 
-async function request(path, options = {}) {
-  await resolveApiBase();
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function isRecoverableRequestError(error) {
+  if (!error) {
+    return false;
+  }
+  return error.name === "AbortError" || error instanceof TypeError;
+}
+
+async function waitForApiRecovery(path, options = {}) {
+  const deadline = Date.now() + RECOVERY_TIMEOUT_MS;
+  let lastError;
+
+  while (Date.now() < deadline) {
+    try {
+      const base = await resolveApiBase({ forceRefresh: true });
+      const healthURL = base ? `${base}/api/health` : "/api/health";
+      const healthResponse = await fetchWithTimeout(healthURL, {
+        method: "GET",
+        timeoutMs: Math.min(5_000, REQUEST_TIMEOUT_MS)
+      });
+      if (!healthResponse.ok) {
+        throw new Error(`Health check failed (${healthResponse.status})`);
+      }
+      return await rawRequest(path, options, { refreshBase: true });
+    } catch (error) {
+      lastError = error;
+      await sleep(RECOVERY_POLL_MS);
+    }
+  }
+
+  throw lastError || new Error("Server did not come back after update");
+}
+
+async function rawRequest(path, options = {}, requestOptions = {}) {
+  await resolveApiBase({ forceRefresh: requestOptions.refreshBase === true });
   const url = joinApi(path);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {})
@@ -82,6 +143,22 @@ async function request(path, options = {}) {
   }
 
   return payload;
+}
+
+async function request(path, options = {}) {
+  try {
+    return await rawRequest(path, options);
+  } catch (error) {
+    if (
+      !options.disableRecovery &&
+      typeof window !== "undefined" &&
+      window.go?.main?.App &&
+      isRecoverableRequestError(error)
+    ) {
+      return waitForApiRecovery(path, { ...options, disableRecovery: true });
+    }
+    throw error;
+  }
 }
 
 export function fetchDataSources() {
