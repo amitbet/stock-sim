@@ -237,6 +237,7 @@ html[data-theme="light"] .theme-switch-track {
   min-height: 0;
   overflow-y: auto;
   padding-right: 6px;
+  padding-bottom: 16px;
 }
 
 .side-grid {
@@ -619,6 +620,11 @@ html[data-theme="light"] .selected-row {
 
 .pending-triggers-section {
   margin-top: 24px;
+}
+
+.results-panel {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .pending-triggers-header {

@@ -28,7 +28,7 @@ export default function ResultsPanel({ result }) {
   }, [cashAmount]);
 
   return (
-    <section className="panel">
+    <section className="panel results-panel">
       <div className="panel-header">
         <div>
           <h2>Run Results</h2>

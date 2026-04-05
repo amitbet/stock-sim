@@ -26,6 +26,23 @@ describe("App", () => {
       if (queued?.length) {
         return jsonResponse(queued.shift());
       }
+      if (path.startsWith("/api/app/version")) {
+        return jsonResponse({ version: "1.0.13" });
+      }
+      if (path.startsWith("/api/app/update-status")) {
+        return jsonResponse({
+          current: "1.0.13",
+          latest: "1.0.13",
+          update_available: false,
+          message: "You are on the latest release"
+        });
+      }
+      if (path.startsWith("/api/app/apply-update")) {
+        return jsonResponse({
+          ok: true,
+          message: "Update started. The app will close shortly to finish installation."
+        });
+      }
       if (path.startsWith("/api/data-sources")) {
         return jsonResponse({ default_source: "sqlite", sources: ["sqlite", "yahoo"] });
       }
@@ -98,6 +115,21 @@ describe("App", () => {
     fireEvent.click(screen.getByText("Batch Simulate"));
 
     await screen.findByText("Batch Simulation Report");
+  });
+
+  it("shows the update banner in browser mode from the HTTP API", async () => {
+    enqueueResponse("/api/app/update-status", {
+      current: "1.0.13",
+      latest: "1.0.14",
+      update_available: true,
+      message: "Update available: 1.0.13 → v1.0.14"
+    });
+
+    render(<App />);
+
+    await screen.findByText("Stock Simulator");
+    expect(await screen.findByText(/A new version is available/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update" })).toBeInTheDocument();
   });
 
   it("keeps the selected ticker when switching data source if Yahoo can load it", async () => {

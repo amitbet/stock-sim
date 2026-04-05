@@ -5,11 +5,14 @@ import Controls from "./components/Controls.jsx";
 import PlanEditor from "./components/PlanEditor.jsx";
 import ResultsPanel from "./components/ResultsPanel.jsx";
 import {
+  applyBrowserUpdate,
+  fetchAppVersion,
   fetchBars,
   fetchDataSources,
   fetchDefaultPlan,
   fetchSymbolInfo,
   fetchSymbols,
+  fetchUpdateStatus,
   runBatchSimulation,
   runSimulation,
   validatePlan
@@ -196,12 +199,16 @@ export default function App() {
             const s = v != null ? String(v).trim() : "";
             setAppVersion(s || "unknown");
           }
-        } else if (import.meta.env.DEV) {
-          setAppVersion("dev");
+        } else {
+          const payload = await fetchAppVersion();
+          if (!cancelled) {
+            const s = payload?.version != null ? String(payload.version).trim() : "";
+            setAppVersion(s || (import.meta.env.DEV ? "dev" : "unknown"));
+          }
         }
       } catch {
-        if (!cancelled && import.meta.env.DEV) {
-          setAppVersion("dev");
+        if (!cancelled) {
+          setAppVersion(import.meta.env.DEV ? "dev" : "unknown");
         }
       }
     })();
@@ -211,12 +218,14 @@ export default function App() {
   }, []);
 
   const refreshUpdateStatus = useCallback(async () => {
-    if (typeof window === "undefined" || !window.go?.main?.App) {
-      return;
-    }
     try {
-      const { CheckForUpdates } = await import("../wailsjs/go/main/App.js");
-      const status = await CheckForUpdates();
+      let status;
+      if (typeof window !== "undefined" && window.go?.main?.App) {
+        const { CheckForUpdates } = await import("../wailsjs/go/main/App.js");
+        status = await CheckForUpdates();
+      } else {
+        status = await fetchUpdateStatus();
+      }
       setUpdateStatus(status);
     } catch {
       /* ignore */
@@ -224,9 +233,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isDesktopApp) {
-      return undefined;
-    }
     void refreshUpdateStatus();
     const id = window.setInterval(() => {
       void refreshUpdateStatus();
@@ -543,8 +549,15 @@ export default function App() {
     setUpdateBusy(true);
     setError("");
     try {
-      const { ApplyUpdateAndRestart } = await import("../wailsjs/go/main/App.js");
-      await ApplyUpdateAndRestart();
+      if (typeof window !== "undefined" && window.go?.main?.App) {
+        const { ApplyUpdateAndRestart } = await import("../wailsjs/go/main/App.js");
+        await ApplyUpdateAndRestart();
+      } else {
+        const payload = await applyBrowserUpdate();
+        if (payload?.message) {
+          setError(payload.message);
+        }
+      }
     } catch (err) {
       setError(err?.message || String(err));
       setUpdateBusy(false);
