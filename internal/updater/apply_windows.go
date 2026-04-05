@@ -59,7 +59,7 @@ func applyPlatform(extractedRoot string) error {
 
 	// Detach from the GUI process so the batch keeps running after Wails exits (otherwise the
 	// updater can be killed before timeout/xcopy completes).
-	cmd := exec.Command("cmd.exe", "/C", "start", "/min", "stock-sim-update", "cmd.exe", "/C", batPath)
+	cmd := exec.Command("cmd.exe", "/C", "start", "\"stock-sim-update\"", "/min", "cmd.exe", "/C", batPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.Start()
 }
