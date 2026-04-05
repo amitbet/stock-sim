@@ -34,7 +34,7 @@ func Apply(currentVersion string) error {
 		return fmt.Errorf("already up to date (%s)", currentVersion)
 	}
 
-	asset, err := PickWailsZipAsset(rel.Assets, runtime.GOOS, runtime.GOARCH)
+	asset, err := PickReleaseZipAsset(rel.Assets, runtime.GOOS, runtime.GOARCH, CurrentExecutableName())
 	if err != nil {
 		return err
 	}

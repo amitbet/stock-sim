@@ -104,4 +104,21 @@ func TestUpgradePath_105_to_106(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("Apply_prechecks_pick_zip_for_win7_legacy_bundle", func(t *testing.T) {
+		rel := &Release{
+			TagName: "v1.0.6",
+			Assets: []ReleaseAsset{
+				{Name: "stock-sim-windows7-amd64-html-v1.0.6.zip", BrowserDownloadURL: "https://x/w7.zip"},
+				{Name: "stock-sim-windows-amd64-v1.0.6.zip", BrowserDownloadURL: "https://x/win.zip"},
+			},
+		}
+		asset, err := PickReleaseZipAsset(rel.Assets, "windows", "amd64", "stock-sim-win7.exe")
+		if err != nil {
+			t.Fatalf("PickReleaseZipAsset(win7): %v", err)
+		}
+		if asset.BrowserDownloadURL != "https://x/w7.zip" {
+			t.Fatalf("win7: got %q want %q", asset.BrowserDownloadURL, "https://x/w7.zip")
+		}
+	})
 }

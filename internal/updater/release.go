@@ -88,9 +88,10 @@ func fetchLatestReleaseFromURL(url string) (*Release, error) {
 	return &rel, nil
 }
 
-// PickWailsZipAsset finds the portable Wails zip for this OS/arch (matches CI release asset names).
-// Names look like stock-sim-darwin-arm64-v1.0.0.zip (older releases used ...-darwin-arm64-wails-...).
-func PickWailsZipAsset(assets []ReleaseAsset, goos, goarch string) (*ReleaseAsset, error) {
+// PickReleaseZipAsset finds the release zip for the current runtime flavor.
+// Desktop names look like stock-sim-darwin-arm64-v1.0.0.zip (older releases used ...-wails-...).
+// The legacy Win7 browser bundle uses names like stock-sim-windows7-amd64-html-v1.0.0.zip.
+func PickReleaseZipAsset(assets []ReleaseAsset, goos, goarch, exeName string) (*ReleaseAsset, error) {
 	var needle string
 	switch {
 	case goos == "darwin" && goarch == "arm64":
@@ -98,7 +99,11 @@ func PickWailsZipAsset(assets []ReleaseAsset, goos, goarch string) (*ReleaseAsse
 	case goos == "darwin" && goarch == "amd64":
 		needle = "darwin-amd64"
 	case goos == "windows" && goarch == "amd64":
-		needle = "windows-amd64"
+		if useLegacyWindows7Asset(exeName) {
+			needle = "windows7-amd64-html"
+		} else {
+			needle = "windows-amd64"
+		}
 	default:
 		return nil, fmt.Errorf("auto-update not supported on %s/%s (only darwin/arm64, darwin/amd64, windows/amd64)", goos, goarch)
 	}
@@ -109,7 +114,7 @@ func PickWailsZipAsset(assets []ReleaseAsset, goos, goarch string) (*ReleaseAsse
 		if !strings.HasSuffix(name, ".zip") {
 			continue
 		}
-		if strings.Contains(name, "windows7-amd64-html") {
+		if needle != "windows7-amd64-html" && strings.Contains(name, "windows7-amd64-html") {
 			continue
 		}
 		// Win7 browser bundle is windows7-amd64-*; substring "windows-amd64" does not match it, but
@@ -122,6 +127,10 @@ func PickWailsZipAsset(assets []ReleaseAsset, goos, goarch string) (*ReleaseAsse
 		}
 	}
 	return nil, fmt.Errorf("no desktop zip asset containing %q in this release", needle)
+}
+
+func PickWailsZipAsset(assets []ReleaseAsset, goos, goarch string) (*ReleaseAsset, error) {
+	return PickReleaseZipAsset(assets, goos, goarch, "")
 }
 
 // CompareVersions returns true if latestTag is newer than current (semver).

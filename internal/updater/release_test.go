@@ -28,6 +28,29 @@ func TestPickWailsZipAsset(t *testing.T) {
 	}
 }
 
+func TestPickReleaseZipAssetWin7Legacy(t *testing.T) {
+	assets := []ReleaseAsset{
+		{Name: "stock-sim-windows7-amd64-html-v1.0.0.zip"},
+		{Name: "stock-sim-windows-amd64-v1.0.0.zip"},
+	}
+
+	a, err := PickReleaseZipAsset(assets, "windows", "amd64", "stock-sim-win7.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "stock-sim-windows7-amd64-html-v1.0.0.zip" {
+		t.Fatalf("got %q", a.Name)
+	}
+
+	a, err = PickReleaseZipAsset(assets, "windows", "amd64", "stock-sim.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "stock-sim-windows-amd64-v1.0.0.zip" {
+		t.Fatalf("got %q", a.Name)
+	}
+}
+
 func TestPickWailsZipAssetLegacyWailsSuffix(t *testing.T) {
 	legacy := []ReleaseAsset{
 		{Name: "stock-sim-darwin-arm64-wails-v0.9.0.zip"},

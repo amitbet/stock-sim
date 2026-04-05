@@ -30,14 +30,10 @@ func applyPlatform(extractedRoot string) error {
 	}
 
 	installDir := filepath.Dir(exe)
+	relaunchExe := exe
 	extractedRoot, err = filepath.Abs(extractedRoot)
 	if err != nil {
 		return err
-	}
-
-	mainExe := filepath.Join(installDir, "stock-sim.exe")
-	if _, err := os.Stat(mainExe); err != nil {
-		return fmt.Errorf("expected stock-sim.exe beside the running executable")
 	}
 
 	srcGlob := filepath.Join(extractedRoot, "*")
@@ -49,7 +45,7 @@ func applyPlatform(extractedRoot string) error {
 			"del \"%%~f0\"\r\n",
 		batchQuote(srcGlob),
 		batchQuote(destDir),
-		batchQuote(mainExe),
+		batchQuote(relaunchExe),
 	)
 
 	batPath := filepath.Join(os.TempDir(), fmt.Sprintf("stock-sim-apply-%d.bat", os.Getpid()))
