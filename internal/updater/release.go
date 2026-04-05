@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/mod/semver"
-
 	"stock-sim/internal/version"
 )
 
@@ -143,7 +141,7 @@ func CompareVersions(current, latestTag string) (bool, error) {
 	if c == "" || l == "" {
 		return false, fmt.Errorf("non-semver version(s): current=%q latest=%q", current, latestTag)
 	}
-	return semver.Compare(l, c) > 0, nil
+	return compareSemver(l, c) > 0, nil
 }
 
 func normalizeSemver(v string) string {
@@ -152,7 +150,7 @@ func normalizeSemver(v string) string {
 	if v == "" {
 		return ""
 	}
-	if !semver.IsValid("v" + v) {
+	if _, ok := parseSemver(v); !ok {
 		return ""
 	}
 	return "v" + v

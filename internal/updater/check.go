@@ -3,8 +3,6 @@ package updater
 import (
 	"fmt"
 	"strings"
-
-	"golang.org/x/mod/semver"
 )
 
 // Status is returned to the UI for update checks.
@@ -46,7 +44,7 @@ func computeUpdateStatus(current string, rel *Release) *Status {
 		st.Message = "Non-semver tags; compare manually"
 		return st
 	}
-	st.UpdateAvailable = semver.Compare(l, c) > 0
+	st.UpdateAvailable = compareSemver(l, c) > 0
 	if !st.UpdateAvailable {
 		st.Message = "You are on the latest release"
 	} else {

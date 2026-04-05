@@ -624,7 +624,24 @@ html[data-theme="light"] .selected-row {
 
 .results-panel {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+
+.results-panel-body {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.results-panel .panel-header {
+  flex-shrink: 0;
+}
+
+.results-panel .table-scroll,
+.results-panel .pending-triggers-section {
+  min-width: 0;
 }
 
 .pending-triggers-header {

@@ -37,7 +37,7 @@ export default function ResultsPanel({ result }) {
       </div>
 
       {result ? (
-        <>
+        <div className="results-panel-body">
           <div className="summary-grid">
             {summaryItem("Reference", result.summary.reference_sell_date)}
             {summaryItem("S Price", result.summary.reference_price.toFixed(2))}
@@ -135,7 +135,7 @@ export default function ResultsPanel({ result }) {
               </table>
             </div>
           </div>
-        </>
+        </div>
       ) : (
         <div className="empty-state">Run a simulation to see the result summary and trade ledger here.</div>
       )}
