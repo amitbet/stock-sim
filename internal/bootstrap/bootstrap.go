@@ -170,7 +170,10 @@ func defaultDBSearchRoots(exePath, wd string) []string {
 	collectShallowRoots(binDir, &searchRoots)
 
 	if bundleParent, ok := macOSAppBundleParentDir(exePath); ok {
-		collectShallowRoots(bundleParent, &searchRoots)
+		// For packaged macOS apps, avoid walking the user's home-directory siblings.
+		// Touching protected folders like Desktop/Documents/Downloads can trigger TCC
+		// prompts during startup and delay backend readiness after auto-update relaunch.
+		collectBundleParentRoots(bundleParent, &searchRoots)
 	}
 
 	// Skip cwd for packaged .app launches (Finder often uses "/" which would add "/" and all its
@@ -180,6 +183,27 @@ func defaultDBSearchRoots(exePath, wd string) []string {
 	}
 
 	return searchRoots
+}
+
+// collectBundleParentRoots adds the folder containing the .app and its direct child directories,
+// but intentionally does not include the parent directory or its siblings.
+func collectBundleParentRoots(anchor string, roots *[]string) {
+	anchor = filepath.Clean(anchor)
+	if anchor == "" || anchor == "." {
+		return
+	}
+	appendUniqueSearchRoot(roots, anchor)
+
+	entries, err := os.ReadDir(anchor)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		appendUniqueSearchRoot(roots, filepath.Join(anchor, e.Name()))
+	}
 }
 
 // collectShallowRoots adds anchor, filepath.Dir(anchor), and each directory under that parent
