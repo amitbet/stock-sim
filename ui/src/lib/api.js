@@ -161,6 +161,25 @@ async function request(path, options = {}) {
   }
 }
 
+async function requestForm(path, formData, options = {}) {
+  await resolveApiBase({ forceRefresh: options.refreshBase === true });
+  const response = await fetchWithTimeout(joinApi(path), {
+    method: "POST",
+    body: formData,
+    ...options
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
+
+  if (!response.ok) {
+    throw new Error(payload?.error || payload || "Request failed");
+  }
+  return payload;
+}
+
 export function fetchDataSources() {
   return request("/api/data-sources");
 }
@@ -209,6 +228,19 @@ export function runSimulation(payload) {
 
 export function runBatchSimulation(payload) {
   return request("/api/simulations/batch", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function parseStockDetailsCsvFile(file) {
+  const form = new FormData();
+  form.append("file", file, file?.name || "tickers.csv");
+  return requestForm("/api/stock-details/parse-csv", form);
+}
+
+export function fetchStockDetails(payload) {
+  return request("/api/stock-details/fetch-sctr", {
     method: "POST",
     body: JSON.stringify(payload)
   });

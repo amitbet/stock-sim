@@ -4,6 +4,7 @@ import CandleChart from "./components/CandleChart.jsx";
 import Controls from "./components/Controls.jsx";
 import PlanEditor from "./components/PlanEditor.jsx";
 import ResultsPanel from "./components/ResultsPanel.jsx";
+import StockDetailsPanel from "./components/StockDetailsPanel.jsx";
 import {
   fetchBars,
   fetchDataSources,
@@ -123,6 +124,7 @@ export default function App() {
     }
     return t;
   });
+  const [activeTab, setActiveTab] = useState("simulator");
 
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -551,6 +553,8 @@ export default function App() {
     }
   }
 
+  const isSimulatorTab = activeTab === "simulator";
+
   return (
     <div className="app-shell">
       <header className="hero">
@@ -615,69 +619,98 @@ export default function App() {
 
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <div className="main-grid">
-        <section className="panel chart-panel">
-          <div className="panel-header">
-            <div>
-              <h2>Daily Candles</h2>
-              <p>Scroll and pinch to zoom, drag to pan, click once for a single run or toggle batch mode to collect many dates.</p>
+      <div className="tab-bar" role="tablist" aria-label="Workspace views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={isSimulatorTab}
+          className={`tab-button${isSimulatorTab ? " active" : ""}`}
+          onClick={() => setActiveTab("simulator")}
+        >
+          Simulator
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!isSimulatorTab}
+          className={`tab-button${!isSimulatorTab ? " active" : ""}`}
+          onClick={() => setActiveTab("details")}
+        >
+          Stock Details
+        </button>
+      </div>
+
+      <div className={`tab-panel${isSimulatorTab ? " active" : ""}`} role="tabpanel" aria-label="Simulator" hidden={!isSimulatorTab}>
+        <div className="main-grid">
+          <section className="panel chart-panel">
+            <div className="panel-header">
+              <div>
+                <h2>Daily Candles</h2>
+                <p>Scroll and pinch to zoom, drag to pan, click once for a single run or toggle batch mode to collect many dates.</p>
+              </div>
             </div>
-          </div>
-          <CandleChart
-            bars={bars}
-            selectedDate={selectedDate}
-            multiSelectedDates={multiSelectedDates}
-            multiSelectEnabled={multiSelectEnabled}
-            onSelectDate={handleSelectDate}
-            actions={actionOverlay}
-            endDate={endDate}
-            theme={theme}
-          />
-        </section>
-
-        <aside className="sidebar-scroll" aria-label="Simulation controls and results">
-          <div className="side-grid">
-            <Controls
-              dataSources={dataSources}
-              dataSource={dataSource}
-              onDataSourceChange={setDataSource}
-              symbolDescription={symbolDescription}
-              symbols={symbols}
-              symbol={symbol}
-              onSymbolChange={setSymbol}
-              executionMode={executionMode}
-              onExecutionModeChange={setExecutionMode}
-              referencePriceMode={referencePriceMode}
-              onReferencePriceModeChange={setReferencePriceMode}
-              referencePrice={referencePrice}
-              onReferencePriceChange={setReferencePrice}
-              referencePriceError={referencePriceError}
-              selectedBar={selectedBar}
-              holdDaysOverride={holdDaysOverride}
-              onHoldDaysOverrideChange={setHoldDaysOverride}
+            <CandleChart
+              bars={bars}
               selectedDate={selectedDate}
+              multiSelectedDates={multiSelectedDates}
               multiSelectEnabled={multiSelectEnabled}
-              onToggleMultiSelect={handleToggleMultiSelect}
-              selectedBatchCount={selectedBatchCount}
-              onRunSingle={handleRunSingle}
-              onRunBatch={handleRunBatch}
-              canRunSingle={canRunSingle}
-              running={loading}
+              onSelectDate={handleSelectDate}
+              actions={actionOverlay}
+              endDate={endDate}
+              theme={theme}
             />
+          </section>
 
-            <PlanEditor
-              value={planText}
-              onChange={setPlanText}
-              validation={validation}
-              onValidate={handleValidate}
-              onLoad={handleLoadPlan}
-              onSave={handleSavePlan}
-              validating={validating}
-            />
+          <aside className="sidebar-scroll" aria-label="Simulation controls and results">
+            <div className="side-grid">
+              <Controls
+                dataSources={dataSources}
+                dataSource={dataSource}
+                onDataSourceChange={setDataSource}
+                symbolDescription={symbolDescription}
+                symbols={symbols}
+                symbol={symbol}
+                onSymbolChange={setSymbol}
+                executionMode={executionMode}
+                onExecutionModeChange={setExecutionMode}
+                referencePriceMode={referencePriceMode}
+                onReferencePriceModeChange={setReferencePriceMode}
+                referencePrice={referencePrice}
+                onReferencePriceChange={setReferencePrice}
+                referencePriceError={referencePriceError}
+                selectedBar={selectedBar}
+                holdDaysOverride={holdDaysOverride}
+                onHoldDaysOverrideChange={setHoldDaysOverride}
+                selectedDate={selectedDate}
+                multiSelectEnabled={multiSelectEnabled}
+                onToggleMultiSelect={handleToggleMultiSelect}
+                selectedBatchCount={selectedBatchCount}
+                onRunSingle={handleRunSingle}
+                onRunBatch={handleRunBatch}
+                canRunSingle={canRunSingle}
+                running={loading}
+              />
 
-            <ResultsPanel result={singleResult} />
-          </div>
-        </aside>
+              <PlanEditor
+                value={planText}
+                onChange={setPlanText}
+                validation={validation}
+                onValidate={handleValidate}
+                onLoad={handleLoadPlan}
+                onSave={handleSavePlan}
+                validating={validating}
+              />
+
+              <ResultsPanel result={singleResult} />
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <div className={`tab-panel${!isSimulatorTab ? " active" : ""}`} role="tabpanel" aria-label="Stock Details" hidden={isSimulatorTab}>
+        <section className="panel details-tab-panel">
+          <StockDetailsPanel />
+        </section>
       </div>
 
       <input ref={fileInputRef} hidden type="file" accept=".yaml,.yml,.json,.txt" onChange={handlePlanFile} />

@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"stock-sim/internal/data"
+	"stock-sim/internal/details"
 	"stock-sim/internal/plan"
 	"stock-sim/internal/sim"
 )
@@ -74,6 +76,7 @@ func NewServer(cfg Config) (*Server, error) {
 		stores:           stores,
 		defaultSource:    defaultSource,
 		availableSources: availableSources,
+		details:          details.NewService(stores[data.YahooDataSource]),
 	}
 	mux.HandleFunc("/api/health", api.health)
 	mux.HandleFunc("/api/default-plan", api.defaultPlan)
@@ -84,6 +87,8 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("/api/plans/validate", api.validatePlan)
 	mux.HandleFunc("/api/simulations/run", api.runSimulation)
 	mux.HandleFunc("/api/simulations/batch", api.runBatch)
+	mux.HandleFunc("/api/stock-details/parse-csv", api.stockDetailsParseCSV)
+	mux.HandleFunc("/api/stock-details/fetch-sctr", api.stockDetailsFetchSCTR)
 
 	if !cfg.APIOnly {
 		uiHandler, err := staticHandler(cfg.UIDistPath)
@@ -163,6 +168,7 @@ type apiHandler struct {
 	stores           map[string]*data.Store
 	defaultSource    string
 	availableSources []string
+	details          *details.Service
 }
 
 func (h *apiHandler) health(w http.ResponseWriter, _ *http.Request) {
@@ -363,6 +369,75 @@ func (h *apiHandler) runBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result.Runs = append(result.Runs, run)
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *apiHandler) stockDetailsParseCSV(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	var text string
+	contentType := r.Header.Get("Content-Type")
+	switch {
+	case strings.HasPrefix(contentType, "multipart/form-data"):
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("parse multipart form: %w", err))
+			return
+		}
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("missing CSV file field 'file'"))
+			return
+		}
+		defer file.Close()
+		body, err := io.ReadAll(file)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("read uploaded file: %w", err))
+			return
+		}
+		text = string(body)
+	default:
+		var payload struct {
+			CSV string `json:"csv"`
+		}
+		var err error
+		payload, err = decodeRequestBody[struct {
+			CSV string `json:"csv"`
+		}](r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		text = payload.CSV
+	}
+
+	result, err := h.details.ParseCSV(text)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *apiHandler) stockDetailsFetchSCTR(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	payload, err := decodeRequestBody[details.FetchRequest](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	result, err := h.details.FetchSCTRForTickers(r.Context(), payload.Tickers, payload.IndustrySource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }
