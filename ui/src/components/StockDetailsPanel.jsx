@@ -69,14 +69,57 @@ function formatValue(value, options = {}) {
   return String(value);
 }
 
+function downloadCsv(filename, content) {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function recordsToCsv(records) {
+  const columns = COLUMNS.map((column) => column.key);
+  const escape = (value) => {
+    const text = value == null ? "" : String(value);
+    if (/[",\r\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  const lines = [columns.join(",")];
+  for (const record of records || []) {
+    lines.push(
+      columns
+        .map((column) => {
+          if (column === "industryPercentAboveMA50") {
+            return escape(record?.industryPercentAboveMA50);
+          }
+          return escape(record?.[column]);
+        })
+        .join(",")
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export default function StockDetailsPanel() {
   const fileInputRef = useRef(null);
+  const latestRequestIdRef = useRef(0);
+  const lastManualAppliedRef = useRef("");
   const [industrySource, setIndustrySource] = useState("finviz");
   const [manualInput, setManualInput] = useState("");
+  const [tickers, setTickers] = useState([]);
   const [records, setRecords] = useState([]);
   const [missingTickers, setMissingTickers] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState("");
+  const [lastSourceLabel, setLastSourceLabel] = useState("");
   const [sortKey, setSortKey] = useState("SCTR");
   const [sortDir, setSortDir] = useState("desc");
   const [dragOver, setDragOver] = useState(false);
@@ -100,26 +143,54 @@ export default function StockDetailsPanel() {
     setSortDir(nextKey === "SCTR" || nextKey === "industryRS" || nextKey === "sectorRS" ? "desc" : "asc");
   }
 
-  async function runFetch(tickers, sourceLabel) {
+  async function runFetch(tickers, sourceLabel, sourceOverride = industrySource, options = {}) {
     if (!Array.isArray(tickers) || tickers.length === 0) {
       return;
     }
-    setLoading(true);
-    setMessage("");
+    const background = options.background === true;
+    const uniqueTickers = Array.from(new Set(tickers.map((ticker) => String(ticker).trim().toUpperCase()).filter(Boolean)));
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+    setTickers(uniqueTickers);
+    if (sourceLabel) {
+      setLastSourceLabel(sourceLabel);
+    }
+    if (background) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+      setMessage("");
+    }
     try {
       const payload = await fetchStockDetails({
-        tickers,
-        industrySource
+        tickers: uniqueTickers,
+        industrySource: sourceOverride
       });
+      if (latestRequestIdRef.current !== requestId) {
+        return;
+      }
       setRecords(Array.isArray(payload.records) ? payload.records : []);
       setMissingTickers(Array.isArray(payload.missingTickers) ? payload.missingTickers : []);
-      setMessage(`${sourceLabel}: loaded ${Array.isArray(payload.records) ? payload.records.length : 0} records.`);
+      if (!background) {
+        setMessage(`${sourceLabel}: loaded ${Array.isArray(payload.records) ? payload.records.length : 0} records.`);
+      }
     } catch (error) {
+      if (latestRequestIdRef.current !== requestId) {
+        return;
+      }
       setMessage(error?.message || String(error));
-      setRecords([]);
-      setMissingTickers([]);
+      if (!background) {
+        setRecords([]);
+        setMissingTickers([]);
+      }
     } finally {
-      setLoading(false);
+      if (latestRequestIdRef.current === requestId) {
+        if (background) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+      }
     }
   }
 
@@ -140,6 +211,17 @@ export default function StockDetailsPanel() {
     }
   }
 
+  function handleManualBlur() {
+    const normalized = detectedTickers.join(",");
+    if (normalized === lastManualAppliedRef.current) {
+      return;
+    }
+    lastManualAppliedRef.current = normalized;
+    if (detectedTickers.length > 0) {
+      void runFetch(detectedTickers, "Manual");
+    }
+  }
+
   return (
     <section className="stock-details-shell" aria-label="Stock details workspace">
       <div className="stock-details-header">
@@ -148,16 +230,38 @@ export default function StockDetailsPanel() {
           <h2>Stock Details</h2>
           <p>Fetch SCTR rankings, enrich sector and industry classifications, and compare industry strength.</p>
         </div>
-        <div className="stock-details-meta">
-          <span>{records.length} records</span>
-          <span>{missingTickers.length} missing</span>
-          <span>{industrySource}</span>
+        <div className="stock-details-header-actions">
+          <div className="stock-details-meta">
+            <span>{records.length} records</span>
+            <span>{missingTickers.length} missing</span>
+            <span>{industrySource}</span>
+            {lastSourceLabel ? <span>{lastSourceLabel}</span> : null}
+            {refreshing ? <span>refreshing</span> : null}
+          </div>
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={records.length === 0}
+            onClick={() => downloadCsv("stock-details.csv", recordsToCsv(sortedRecords))}
+          >
+            Export CSV
+          </button>
         </div>
       </div>
 
       <div className="stock-details-source">
         <label htmlFor="industry-source">Industry Source</label>
-        <select id="industry-source" value={industrySource} onChange={(event) => setIndustrySource(event.target.value)}>
+        <select
+          id="industry-source"
+          value={industrySource}
+          onChange={(event) => {
+            const nextSource = event.target.value;
+            setIndustrySource(nextSource);
+            if (tickers.length > 0) {
+              void runFetch(tickers, lastSourceLabel, nextSource, { background: true });
+            }
+          }}
+        >
           {INDUSTRY_SOURCES.map((source) => (
             <option key={source.value} value={source.value}>
               {source.label}
@@ -207,6 +311,7 @@ export default function StockDetailsPanel() {
             className="stock-details-textarea"
             value={manualInput}
             onChange={(event) => setManualInput(event.target.value)}
+            onBlur={handleManualBlur}
             placeholder={"Paste tickers separated by comma, space, or newline.\nExample: AAPL MSFT NVDA"}
           />
           <div className="stock-details-card-row">
@@ -215,7 +320,10 @@ export default function StockDetailsPanel() {
               type="button"
               className="primary-button"
               disabled={loading || detectedTickers.length === 0}
-              onClick={() => void runFetch(detectedTickers, "Manual")}
+              onClick={() => {
+                lastManualAppliedRef.current = detectedTickers.join(",");
+                void runFetch(detectedTickers, "Manual");
+              }}
             >
               {loading ? "Loading..." : "Fetch SCTR"}
             </button>

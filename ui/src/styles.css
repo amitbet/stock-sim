@@ -368,6 +368,14 @@ html[data-theme="light"] .panel {
   align-items: flex-start;
 }
 
+.stock-details-header-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .stock-details-kicker {
   font-size: 11px;
   text-transform: uppercase;
@@ -786,6 +794,10 @@ html[data-theme="light"] .symbol-option.active {
   .stock-details-entry-grid {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .stock-details-header-actions {
+    justify-content: flex-start;
   }
 
   .stock-details-meta {

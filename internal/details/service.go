@@ -21,6 +21,8 @@ import (
 
 const (
 	defaultSCTRURL             = "https://stockcharts.com/j-sum/sum?cmd=sctr&view=L&timeframe=I"
+	detailsRecordCacheTTL      = 6 * time.Hour
+	sctrSnapshotCacheTTL       = 6 * time.Hour
 	classificationCacheTTL     = 180 * 24 * time.Hour
 	industryMA50CacheTTL       = 24 * time.Hour
 	historicalPricesCacheTTL   = 24 * time.Hour
@@ -36,6 +38,8 @@ type Service struct {
 	yahooStore *data.Store
 
 	mu                  sync.RWMutex
+	sctrSnapshotCache   sctrSnapshotCacheEntry
+	detailRecordCache   map[string]detailRecordCacheEntry
 	finvizCache         map[string]classificationCacheEntry
 	yahooCache          map[string]classificationCacheEntry
 	earningsDateCache   map[string]earningsDateCacheEntry
@@ -46,6 +50,16 @@ type Service struct {
 
 type classificationCacheEntry struct {
 	value     *Classification
+	expiresAt time.Time
+}
+
+type detailRecordCacheEntry struct {
+	value     Record
+	expiresAt time.Time
+}
+
+type sctrSnapshotCacheEntry struct {
+	value     []Record
 	expiresAt time.Time
 }
 
@@ -177,6 +191,7 @@ func NewService(yahooStore *data.Store) *Service {
 	return &Service{
 		httpClient:          &http.Client{Timeout: defaultRequestTimeout},
 		yahooStore:          yahooStore,
+		detailRecordCache:   make(map[string]detailRecordCacheEntry),
 		finvizCache:         make(map[string]classificationCacheEntry),
 		yahooCache:          make(map[string]classificationCacheEntry),
 		earningsDateCache:   make(map[string]earningsDateCacheEntry),
@@ -220,6 +235,10 @@ func (s *Service) ParseCSV(text string) (*ParseCSVResult, error) {
 
 func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, industrySource string) (*FetchResponse, error) {
 	normalized := normalizeTickers(tickers)
+	normalizedSource := strings.ToLower(strings.TrimSpace(industrySource))
+	if normalizedSource == "" {
+		normalizedSource = "finviz"
+	}
 	if len(normalized) == 0 {
 		return &FetchResponse{
 			Records:        []Record{},
@@ -239,6 +258,8 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 	}
 
 	records := make([]Record, 0, len(normalized))
+	cachedRecords := make([]Record, 0, len(normalized))
+	recordsToEnrich := make([]Record, 0, len(normalized))
 	missing := make([]string, 0)
 	for _, ticker := range normalized {
 		record, ok := recordMap[ticker]
@@ -247,13 +268,23 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 			continue
 		}
 		records = append(records, record)
+		if cached, ok := s.cachedDetailRecord(ticker, normalizedSource); ok {
+			cachedRecords = append(cachedRecords, cached)
+			continue
+		}
+		recordsToEnrich = append(recordsToEnrich, record)
 	}
 
-	classified, err := s.enrichRecordsWithClassification(ctx, records, industrySource)
-	if err != nil {
-		return nil, err
+	classifiedFresh := make([]Record, 0, len(recordsToEnrich))
+	if len(recordsToEnrich) > 0 {
+		classifiedFresh, err = s.enrichRecordsWithClassification(ctx, recordsToEnrich, normalizedSource)
+		if err != nil {
+			return nil, err
+		}
+		s.enrichRecordsWithEarningsDates(ctx, classifiedFresh)
 	}
-	s.enrichRecordsWithEarningsDates(ctx, classified)
+
+	classified := append(cachedRecords, classifiedFresh...)
 
 	stats := calculateStats(allRecords)
 	industryMap := buildIndustryLookupMap(allRecords, classified)
@@ -282,6 +313,7 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 			classified[idx].IndustryAboveMA50 = boolPtr(ma50.AboveMA)
 			classified[idx].IndustryPercentAbove50 = floatPtr(ma50.PercentAboveMA50)
 		}
+		s.storeDetailRecordCache(classified[idx], normalizedSource)
 	}
 
 	sort.SliceStable(classified, func(i, j int) bool {
@@ -323,6 +355,14 @@ func (s *Service) enrichRecordsWithEarningsDates(ctx context.Context, records []
 }
 
 func (s *Service) fetchSCTRJSON(ctx context.Context) ([]Record, error) {
+	now := time.Now()
+	s.mu.RLock()
+	cachedSnapshot := s.sctrSnapshotCache
+	s.mu.RUnlock()
+	if cachedSnapshot.value != nil && now.Before(cachedSnapshot.expiresAt) {
+		return cloneRecords(cachedSnapshot.value), nil
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, defaultSCTRURL, nil)
 	if err != nil {
 		return nil, err
@@ -351,7 +391,14 @@ func (s *Service) fetchSCTRJSON(ctx context.Context) ([]Record, error) {
 		return nil, fmt.Errorf("decode stockcharts sctr: %w", err)
 	}
 
-	return normalizeSCTRRecords(raw), nil
+	records := normalizeSCTRRecords(raw)
+	s.mu.Lock()
+	s.sctrSnapshotCache = sctrSnapshotCacheEntry{
+		value:     cloneRecords(records),
+		expiresAt: now.Add(sctrSnapshotCacheTTL),
+	}
+	s.mu.Unlock()
+	return records, nil
 }
 
 func normalizeSCTRRecords(raw []sctrRawItem) []Record {
@@ -648,6 +695,78 @@ func (s *Service) fetchNasdaqEarningsCalendar(ctx context.Context, dateValue str
 	s.mu.Unlock()
 
 	return calendar, nil
+}
+
+func (s *Service) cachedDetailRecord(symbol, source string) (Record, bool) {
+	cacheKey := detailRecordCacheKey(symbol, source)
+	now := time.Now()
+	s.mu.RLock()
+	entry, ok := s.detailRecordCache[cacheKey]
+	s.mu.RUnlock()
+	if !ok || !now.Before(entry.expiresAt) {
+		return Record{}, false
+	}
+	return cloneRecord(entry.value), true
+}
+
+func (s *Service) storeDetailRecordCache(record Record, source string) {
+	cacheKey := detailRecordCacheKey(record.Symbol, source)
+	s.mu.Lock()
+	s.detailRecordCache[cacheKey] = detailRecordCacheEntry{
+		value:     cloneRecord(record),
+		expiresAt: time.Now().Add(detailsRecordCacheTTL),
+	}
+	s.mu.Unlock()
+}
+
+func detailRecordCacheKey(symbol, source string) string {
+	return strings.ToUpper(strings.TrimSpace(symbol)) + "|" + strings.ToLower(strings.TrimSpace(source))
+}
+
+func cloneRecords(records []Record) []Record {
+	out := make([]Record, len(records))
+	for idx, record := range records {
+		out[idx] = cloneRecord(record)
+	}
+	return out
+}
+
+func cloneRecord(record Record) Record {
+	cloned := record
+	cloned.SCTR = cloneFloat64Ptr(record.SCTR)
+	cloned.Delta = cloneFloat64Ptr(record.Delta)
+	cloned.Close = cloneFloat64Ptr(record.Close)
+	cloned.MarketCap = cloneFloat64Ptr(record.MarketCap)
+	cloned.Vol = cloneInt64Ptr(record.Vol)
+	cloned.IndustryRS = cloneFloat64Ptr(record.IndustryRS)
+	cloned.SectorRS = cloneFloat64Ptr(record.SectorRS)
+	cloned.IndustryAboveMA50 = cloneBoolPtr(record.IndustryAboveMA50)
+	cloned.IndustryPercentAbove50 = cloneFloat64Ptr(record.IndustryPercentAbove50)
+	return cloned
+}
+
+func cloneFloat64Ptr(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
+func cloneInt64Ptr(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
+func cloneBoolPtr(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
 }
 
 func (s *Service) fetchClassificationWithCache(key string, ttl time.Duration, store map[string]classificationCacheEntry, fetcher func() (*Classification, error)) (*Classification, error) {
