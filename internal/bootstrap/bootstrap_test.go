@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -83,7 +84,7 @@ func TestDefaultDBSearchRootsIncludesCWDForCLI(t *testing.T) {
 	}
 }
 
-func TestLoadDataConfigPrefersSQLiteWhenDBExists(t *testing.T) {
+func TestLoadDataConfigDefaultsToYahooWhenDBExists(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "scanner.sqlite")
 	createSQLiteFile(t, dbPath, `CREATE TABLE bars_daily (symbol TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, vwap REAL);`)
@@ -102,16 +103,40 @@ func TestLoadDataConfigPrefersSQLiteWhenDBExists(t *testing.T) {
 	if err := os.Setenv("SIM_DB_PATH", dbPath); err != nil {
 		t.Fatalf("set SIM_DB_PATH: %v", err)
 	}
-	if err := os.Setenv("SIM_DATA_SOURCE", "yahoo"); err != nil {
-		t.Fatalf("set SIM_DATA_SOURCE: %v", err)
-	}
+	_ = os.Unsetenv("SIM_DATA_SOURCE")
 
 	cfg, err := LoadDataConfig()
 	if err != nil {
 		t.Fatalf("LoadDataConfig returned error: %v", err)
 	}
-	if cfg.DefaultSource != "sqlite" {
-		t.Fatalf("expected default source sqlite, got %q", cfg.DefaultSource)
+	if cfg.DefaultSource != "yahoo" {
+		t.Fatalf("expected default source yahoo, got %q", cfg.DefaultSource)
+	}
+}
+
+func TestLoadDataConfigRequiresExplicitSQLitePath(t *testing.T) {
+	originalDBPath := os.Getenv("SIM_DB_PATH")
+	originalDataSource := os.Getenv("SIM_DATA_SOURCE")
+	t.Cleanup(func() {
+		_ = os.Setenv("SIM_DB_PATH", originalDBPath)
+		if originalDataSource == "" {
+			_ = os.Unsetenv("SIM_DATA_SOURCE")
+			return
+		}
+		_ = os.Setenv("SIM_DATA_SOURCE", originalDataSource)
+	})
+
+	_ = os.Unsetenv("SIM_DB_PATH")
+	if err := os.Setenv("SIM_DATA_SOURCE", "sqlite"); err != nil {
+		t.Fatalf("set SIM_DATA_SOURCE: %v", err)
+	}
+
+	_, err := LoadDataConfig()
+	if err == nil {
+		t.Fatal("expected sqlite startup without SIM_DB_PATH to fail")
+	}
+	if !strings.Contains(err.Error(), "SIM_DB_PATH") {
+		t.Fatalf("expected SIM_DB_PATH guidance, got %v", err)
 	}
 }
 

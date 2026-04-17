@@ -65,7 +65,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	defaultSource := cfg.DefaultSource
 	if defaultSource == "" {
-		defaultSource = "sqlite"
+		defaultSource = "yahoo"
 	}
 	if _, ok := stores[defaultSource]; !ok && len(availableSources) > 0 {
 		defaultSource = availableSources[0]

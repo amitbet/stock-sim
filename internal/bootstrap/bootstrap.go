@@ -22,7 +22,7 @@ import (
 
 const managedDBPrefix = "stock-sim-"
 
-// DataConfig holds resolved DB path and default Yahoo/sqlite source after env + discovery.
+// DataConfig holds resolved DB path and default Yahoo/sqlite source.
 type DataConfig struct {
 	DBPath        string
 	DefaultSource string
@@ -38,19 +38,16 @@ func EnvOrDefault(key, fallback string) string {
 	return value
 }
 
-// LoadDataConfig applies SIM_DB_PATH, SIM_DATA_SOURCE, and filesystem discovery (same rules as the legacy main).
+// LoadDataConfig applies SIM_DB_PATH and SIM_DATA_SOURCE.
+// Yahoo is the default startup source; SQLite is available only when explicitly configured.
 func LoadDataConfig() (DataConfig, error) {
 	dataSource := strings.TrimSpace(os.Getenv("SIM_DATA_SOURCE"))
 	configuredDBPath := strings.TrimSpace(os.Getenv("SIM_DB_PATH"))
 	dbPath := configuredDBPath
-	defaultDBPath, searchRoots, found := discoverDefaultDBPath()
-	sourceDBPath := dbPath
-	if sourceDBPath == "" && found {
-		sourceDBPath = defaultDBPath
-	}
-	if sourceDBPath != "" {
-		if isManagedSQLiteFile(sourceDBPath) {
-			absPath, err := filepath.Abs(sourceDBPath)
+	searchRoots := []string{}
+	if dbPath != "" {
+		if isManagedSQLiteFile(dbPath) {
+			absPath, err := filepath.Abs(dbPath)
 			if err != nil {
 				return DataConfig{}, err
 			}
@@ -61,7 +58,7 @@ func LoadDataConfig() (DataConfig, error) {
 			dbPath = absPath
 		} else {
 			var err error
-			dbPath, err = prepareManagedDB(sourceDBPath)
+			dbPath, err = prepareManagedDB(dbPath)
 			if err != nil {
 				return DataConfig{}, err
 			}
@@ -69,20 +66,11 @@ func LoadDataConfig() (DataConfig, error) {
 	}
 
 	if dataSource == "" {
-		if dbPath != "" {
-			dataSource = "sqlite"
-		} else {
-			dataSource = "yahoo"
-		}
-	}
-	if dbPath != "" && !strings.EqualFold(dataSource, "sqlite") {
-		// Prefer the local scanner DB whenever one is available; Yahoo remains selectable in the UI.
-		dataSource = "sqlite"
+		dataSource = "yahoo"
 	}
 	if dbPath == "" && strings.EqualFold(dataSource, "sqlite") {
 		return DataConfig{}, fmt.Errorf(
-			"no sqlite database found. Searched: %s. Put a .sqlite/.sqlite3/.db file next to the binary, in its parent directory, or in a sibling directory, or set SIM_DB_PATH",
-			strings.Join(searchRoots, ", "),
+			"SIM_DATA_SOURCE=sqlite requires SIM_DB_PATH to point to a scanner sqlite file with bars_daily",
 		)
 	}
 
