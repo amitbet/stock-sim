@@ -82,6 +82,7 @@ func TestAPIEndpoints(t *testing.T) {
 	t.Run("rejects out of range reference price override", func(t *testing.T) {
 		body := `{
 			"symbol":"QQQ",
+			"data_source":"sqlite",
 			"reference_sell_date":"2024-01-02",
 			"plan":"metadata:\n  name: Test\nreference_price: sell_price\nentry_rules:\n  - id: first-entry\n    label: First entry\n    trigger:\n      trading_days_since_reference: 1\n    action:\n      type: buy_percent\n      buy_percent: 20\nconstraints:\n  max_actions_per_day: 1\n  prevent_duplicate_level_buys: true\nexit: {}\n",
 			"execution_price_mode":"same_day_close",
@@ -113,6 +114,7 @@ func TestAPIEndpoints(t *testing.T) {
 	t.Run("simulation uses full future history for reclaim exit", func(t *testing.T) {
 		body := `{
 			"symbol":"QQQ",
+			"data_source":"sqlite",
 			"reference_sell_date":"2024-01-02",
 			"plan":"metadata:\n  name: Test\nreference_price: sell_price\nentry_rules:\n  - id: first-entry\n    label: First entry\n    trigger:\n      trading_days_since_reference: 1\n    action:\n      type: buy_percent\n      buy_percent: 100\nconstraints:\n  max_actions_per_day: 1\n  prevent_duplicate_level_buys: true\nexit: {}\n",
 			"execution_price_mode":"exact",
