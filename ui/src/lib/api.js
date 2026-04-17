@@ -1,10 +1,14 @@
 let apiBaseCache;
 let apiBaseReady;
+let apiHealthReady;
 const REQUEST_TIMEOUT_MS = 15_000;
+const STARTUP_REQUEST_TIMEOUT_MS = 60_000;
 const RECOVERY_TIMEOUT_MS = 45_000;
 const RECOVERY_POLL_MS = 750;
 const STOCK_DETAILS_TIMEOUT_MS = 120_000;
 const CSV_PARSE_TIMEOUT_MS = 120_000;
+const API_READY_TIMEOUT_MS = 60_000;
+const API_READY_POLL_MS = 500;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,6 +17,7 @@ function sleep(ms) {
 function clearApiBaseCache() {
   apiBaseCache = undefined;
   apiBaseReady = undefined;
+  apiHealthReady = undefined;
 }
 
 async function waitForWailsBindings() {
@@ -79,6 +84,72 @@ function joinApi(path) {
   return `${base}${p}`;
 }
 
+function timeoutForPath(path, explicitTimeoutMs) {
+  if (explicitTimeoutMs != null) {
+    return explicitTimeoutMs;
+  }
+  if (typeof path === "string" && path.startsWith("/api/stock-details/")) {
+    return STOCK_DETAILS_TIMEOUT_MS;
+  }
+  if (
+    path === "/api/data-sources" ||
+    path === "/api/default-plan" ||
+    (typeof path === "string" && path.startsWith("/api/symbols?")) ||
+    (typeof path === "string" && path.startsWith("/api/symbol-info?")) ||
+    (typeof path === "string" && path.startsWith("/api/bars?"))
+  ) {
+    return STARTUP_REQUEST_TIMEOUT_MS;
+  }
+  return REQUEST_TIMEOUT_MS;
+}
+
+function shouldWaitForApiReady() {
+  return typeof window !== "undefined" && !!window.go?.main?.App;
+}
+
+async function ensureApiReady(options = {}) {
+  if (!shouldWaitForApiReady()) {
+    return;
+  }
+  const forceRefresh = options.forceRefresh === true;
+  if (forceRefresh) {
+    apiHealthReady = undefined;
+  }
+  if (apiHealthReady) {
+    return apiHealthReady;
+  }
+  apiHealthReady = (async () => {
+    const deadline = Date.now() + API_READY_TIMEOUT_MS;
+    let lastError;
+
+    while (Date.now() < deadline) {
+      try {
+        const base = await resolveApiBase({ forceRefresh });
+        const healthURL = base ? `${base}/api/health` : "/api/health";
+        const healthResponse = await fetchWithTimeout(healthURL, {
+          method: "GET",
+          timeoutMs: Math.min(5_000, REQUEST_TIMEOUT_MS)
+        });
+        if (!healthResponse.ok) {
+          throw new Error(`Health check failed (${healthResponse.status})`);
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        await sleep(API_READY_POLL_MS);
+      }
+    }
+
+    throw lastError || new Error("Server did not become ready in time");
+  })();
+  try {
+    await apiHealthReady;
+  } catch (error) {
+    apiHealthReady = undefined;
+    throw error;
+  }
+}
+
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
@@ -94,7 +165,14 @@ async function fetchWithTimeout(url, options = {}) {
     });
   } catch (error) {
     if (timedOut && (error?.name === "AbortError" || error instanceof TypeError)) {
-      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      const requestLabel = (() => {
+        try {
+          return new URL(String(url), typeof window !== "undefined" ? window.location.origin : "http://localhost").pathname;
+        } catch {
+          return String(url);
+        }
+      })();
+      throw new Error(`Request to ${requestLabel} timed out after ${Math.round(timeoutMs / 1000)}s`);
     }
     if (error?.name === "AbortError" && (!error?.message || /aborted without reason/i.test(String(error.message)))) {
       throw new Error("Request was interrupted before the server responded");
@@ -118,15 +196,7 @@ async function waitForApiRecovery(path, options = {}) {
 
   while (Date.now() < deadline) {
     try {
-      const base = await resolveApiBase({ forceRefresh: true });
-      const healthURL = base ? `${base}/api/health` : "/api/health";
-      const healthResponse = await fetchWithTimeout(healthURL, {
-        method: "GET",
-        timeoutMs: Math.min(5_000, REQUEST_TIMEOUT_MS)
-      });
-      if (!healthResponse.ok) {
-        throw new Error(`Health check failed (${healthResponse.status})`);
-      }
+      await ensureApiReady({ forceRefresh: true });
       return await rawRequest(path, options, { refreshBase: true });
     } catch (error) {
       lastError = error;
@@ -138,9 +208,11 @@ async function waitForApiRecovery(path, options = {}) {
 }
 
 async function rawRequest(path, options = {}, requestOptions = {}) {
+  await ensureApiReady({ forceRefresh: requestOptions.refreshBase === true });
   await resolveApiBase({ forceRefresh: requestOptions.refreshBase === true });
   const url = joinApi(path);
   const response = await fetchWithTimeout(url, {
+    timeoutMs: timeoutForPath(path, options.timeoutMs),
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {})
@@ -177,10 +249,12 @@ async function request(path, options = {}) {
 }
 
 async function requestForm(path, formData, options = {}) {
+  await ensureApiReady({ forceRefresh: options.refreshBase === true });
   await resolveApiBase({ forceRefresh: options.refreshBase === true });
   const response = await fetchWithTimeout(joinApi(path), {
     method: "POST",
     body: formData,
+    timeoutMs: timeoutForPath(path, options.timeoutMs),
     ...options
   });
 
