@@ -80,7 +80,42 @@ func applyPlatform(extractedRoot string) error {
 		return err
 	}
 
-	script := fmt.Sprintf(`#!/bin/bash
+	shPath := filepath.Join(os.TempDir(), fmt.Sprintf("stock-sim-apply-%d.sh", os.Getpid()))
+	if err := os.WriteFile(shPath, []byte(buildDarwinApplyScript(destParent, newApp)), 0700); err != nil {
+		return err
+	}
+
+	logPath := darwinUpdateLogPath()
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		logPath = filepath.Join(os.TempDir(), "stock-sim-update.log")
+	}
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open update log: %w", err)
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command("/bin/bash", shPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", os.DevNull, err)
+	}
+	defer devNull.Close()
+	cmd.Stdin = devNull
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start apply launcher: %w", err)
+	}
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("detach apply launcher: %w", err)
+	}
+	return nil
+}
+
+func buildDarwinApplyScript(destParent, newApp string) string {
+	return fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 DEST=%q
 NEW=%q
@@ -94,29 +129,11 @@ if [ -d "$DEST/$NAME" ]; then
 fi
 cp -R "$NEW" "$DEST/"
 echo "stock-sim apply: launching"
-open "$DEST/$NAME" || true
+open -n "$DEST/$NAME" || true
 rm -rf "$DEST/$NAME.old"
 rm -f "$0"
 echo "stock-sim apply: done"
 `, destParent, newApp)
-
-	shPath := filepath.Join(os.TempDir(), fmt.Sprintf("stock-sim-apply-%d.sh", os.Getpid()))
-	if err := os.WriteFile(shPath, []byte(script), 0700); err != nil {
-		return err
-	}
-
-	logPath := darwinUpdateLogPath()
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-		logPath = filepath.Join(os.TempDir(), "stock-sim-update.log")
-	}
-	// Short-lived bash -c starts nohup then exits so the updater survives runtime.Quit (Wails child teardown).
-	launcher := fmt.Sprintf(`echo "[$(date)] stock-sim update starting" >>%q; nohup /bin/bash %q >>%q 2>&1 </dev/null &`, logPath, shPath, logPath)
-	cmd := exec.Command("/bin/bash", "-c", launcher)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("start apply launcher: %w", err)
-	}
-	return nil
 }
 
 func darwinUpdateLogPath() string {

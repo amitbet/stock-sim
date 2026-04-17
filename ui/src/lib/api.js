@@ -4,6 +4,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const RECOVERY_TIMEOUT_MS = 45_000;
 const RECOVERY_POLL_MS = 750;
 const STOCK_DETAILS_TIMEOUT_MS = 120_000;
+const CSV_PARSE_TIMEOUT_MS = 120_000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -80,12 +81,25 @@ function joinApi(path) {
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  let timedOut = false;
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
     return await fetch(url, {
       ...options,
       signal: controller.signal
     });
+  } catch (error) {
+    if (timedOut && (error?.name === "AbortError" || error instanceof TypeError)) {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    if (error?.name === "AbortError" && (!error?.message || /aborted without reason/i.test(String(error.message)))) {
+      throw new Error("Request was interrupted before the server responded");
+    }
+    throw error;
   } finally {
     window.clearTimeout(timeoutId);
   }
@@ -237,7 +251,9 @@ export function runBatchSimulation(payload) {
 export function parseStockDetailsCsvFile(file) {
   const form = new FormData();
   form.append("file", file, file?.name || "tickers.csv");
-  return requestForm("/api/stock-details/parse-csv", form);
+  return requestForm("/api/stock-details/parse-csv", form, {
+    timeoutMs: CSV_PARSE_TIMEOUT_MS
+  });
 }
 
 export function fetchStockDetails(payload) {
