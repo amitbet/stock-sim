@@ -89,6 +89,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("/api/simulations/batch", api.runBatch)
 	mux.HandleFunc("/api/stock-details/parse-csv", api.stockDetailsParseCSV)
 	mux.HandleFunc("/api/stock-details/fetch-sctr", api.stockDetailsFetchSCTR)
+	mux.HandleFunc("/api/stock-details/industry-ma50", api.stockDetailsIndustryMA50)
 
 	if !cfg.APIOnly {
 		uiHandler, err := staticHandler(cfg.UIDistPath)
@@ -440,6 +441,30 @@ func (h *apiHandler) stockDetailsFetchSCTR(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *apiHandler) stockDetailsIndustryMA50(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	payload, err := decodeRequestBody[details.IndustryMA50Request](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	ma50, err := h.details.FetchIndustryMA50(r.Context(), payload.Industry, payload.Records)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, details.IndustryMA50Response{
+		Industry: payload.Industry,
+		MA50:     ma50,
+	})
 }
 
 func (h *apiHandler) executeOne(ctx context.Context, dataSource, symbol, referenceSellDate, rawPlan string, mode sim.ExecutionPriceMode, referencePriceMode sim.ReferencePriceMode, referencePriceOverride *float64) (sim.Result, error) {

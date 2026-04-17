@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -44,6 +47,9 @@ type Service struct {
 	yahooStore *data.Store
 
 	mu                  sync.RWMutex
+	diskMu              sync.Mutex
+	cacheFilePath       string
+	persistentCacheOK   bool
 	sctrSnapshotCache   sctrSnapshotCacheEntry
 	detailRecordCache   map[string]detailRecordCacheEntry
 	finvizCache         map[string]classificationCacheEntry
@@ -101,10 +107,20 @@ type FetchRequest struct {
 	IndustrySource string   `json:"industrySource"`
 }
 
+type IndustryMA50Request struct {
+	Industry string   `json:"industry"`
+	Records  []Record `json:"records"`
+}
+
 type FetchResponse struct {
 	Records        []Record    `json:"records"`
 	Stats          StatsResult `json:"stats"`
 	MissingTickers []string    `json:"missingTickers"`
+}
+
+type IndustryMA50Response struct {
+	Industry string        `json:"industry"`
+	MA50     *IndustryMA50 `json:"ma50"`
 }
 
 type Record struct {
@@ -194,9 +210,10 @@ var (
 )
 
 func NewService(yahooStore *data.Store) *Service {
-	return &Service{
+	service := &Service{
 		httpClient:          &http.Client{Timeout: defaultRequestTimeout},
 		yahooStore:          yahooStore,
+		persistentCacheOK:   true,
 		detailRecordCache:   make(map[string]detailRecordCacheEntry),
 		finvizCache:         make(map[string]classificationCacheEntry),
 		yahooCache:          make(map[string]classificationCacheEntry),
@@ -205,6 +222,10 @@ func NewService(yahooStore *data.Store) *Service {
 		historicalPriceData: make(map[string]historicalPriceCacheEntry),
 		industryMA50:        make(map[string]industryMA50CacheEntry),
 	}
+	if err := service.initializePersistentCache(); err != nil {
+		log.Printf("stock-sim: details persistent cache disabled: %v", err)
+	}
+	return service
 }
 
 func (s *Service) ParseCSV(text string) (*ParseCSVResult, error) {
@@ -253,6 +274,29 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 		}, nil
 	}
 
+	fullyCachedRecords, allCached := s.cachedDetailRecords(normalized, normalizedSource)
+	if allCached {
+		sort.SliceStable(fullyCachedRecords, func(i, j int) bool {
+			si := recordScore(fullyCachedRecords[i].SCTR)
+			sj := recordScore(fullyCachedRecords[j].SCTR)
+			if si == sj {
+				return fullyCachedRecords[i].Symbol < fullyCachedRecords[j].Symbol
+			}
+			return si > sj
+		})
+		industryMA50 := s.cachedIndustryMA50Map(fullyCachedRecords)
+		log.Printf("stock-sim: stock details served fully from cache for %d tickers (%s)", len(fullyCachedRecords), normalizedSource)
+		return &FetchResponse{
+			Records: fullyCachedRecords,
+			Stats: StatsResult{
+				Industries:   map[string]AggregateStat{},
+				Sectors:      map[string]AggregateStat{},
+				IndustryMA50: industryMA50,
+			},
+			MissingTickers: []string{},
+		}, nil
+	}
+
 	allRecords, err := s.fetchSCTRJSON(ctx)
 	if err != nil {
 		return nil, err
@@ -294,7 +338,7 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 
 	stats := calculateStats(allRecords)
 	industryMap := buildIndustryLookupMap(allRecords, classified)
-	industryMA50 := s.calculateIndustryMA50Map(ctx, classified)
+	industryMA50 := s.cachedIndustryMA50Map(classified)
 
 	for idx := range classified {
 		rsIndustry, rsSector := calculateRelativeStrength(classified[idx], stats, industryMap)
@@ -333,6 +377,20 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 		},
 		MissingTickers: missing,
 	}, nil
+}
+
+func (s *Service) FetchIndustryMA50(ctx context.Context, industry string, records []Record) (*IndustryMA50, error) {
+	normalizedIndustry := strings.TrimSpace(industry)
+	if normalizedIndustry == "" {
+		return nil, nil
+	}
+	for _, record := range records {
+		if strings.TrimSpace(record.Industry) != normalizedIndustry {
+			continue
+		}
+		return s.calculateIndustryMA50(ctx, record, records)
+	}
+	return nil, nil
 }
 
 func (s *Service) fetchFallbackRecords(ctx context.Context, tickers []string, source string) []Record {
@@ -461,6 +519,27 @@ func (s *Service) calculateIndustryMA50Map(ctx context.Context, records []Record
 	return industryMA50
 }
 
+func (s *Service) cachedIndustryMA50Map(records []Record) map[string]IndustryMA50 {
+	out := make(map[string]IndustryMA50)
+	now := time.Now()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, record := range records {
+		industry := strings.TrimSpace(record.Industry)
+		if industry == "" {
+			continue
+		}
+		if _, ok := out[industry]; ok {
+			continue
+		}
+		cached, ok := s.industryMA50[industry]
+		if ok && now.Before(cached.expiresAt) && cached.value != nil {
+			out[industry] = *cached.value
+		}
+	}
+	return out
+}
+
 func (s *Service) enrichRecordsWithEarningsDates(ctx context.Context, records []Record) {
 	symbols := make([]string, 0, len(records))
 	for _, record := range records {
@@ -523,6 +602,7 @@ func (s *Service) fetchSCTRJSON(ctx context.Context) ([]Record, error) {
 		expiresAt: now.Add(sctrSnapshotCacheTTL),
 	}
 	s.mu.Unlock()
+	s.persistCaches()
 	return records, nil
 }
 
@@ -747,6 +827,7 @@ func (s *Service) fetchUpcomingEarningsDates(ctx context.Context, symbols []stri
 					expiresAt: now.Add(earningsDateCacheTTL),
 				}
 				s.mu.Unlock()
+				s.persistCaches()
 			}
 		}
 	}
@@ -762,6 +843,7 @@ func (s *Service) fetchUpcomingEarningsDates(ctx context.Context, symbols []stri
 		}
 	}
 	s.mu.Unlock()
+	s.persistCaches()
 
 	return results, nil
 }
@@ -818,6 +900,7 @@ func (s *Service) fetchNasdaqEarningsCalendar(ctx context.Context, dateValue str
 		expiresAt: now.Add(earningsDateCacheTTL),
 	}
 	s.mu.Unlock()
+	s.persistCaches()
 
 	return calendar, nil
 }
@@ -834,14 +917,36 @@ func (s *Service) cachedDetailRecord(symbol, source string) (Record, bool) {
 	return cloneRecord(entry.value), true
 }
 
+func (s *Service) cachedDetailRecords(tickers []string, source string) ([]Record, bool) {
+	records := make([]Record, 0, len(tickers))
+	for _, ticker := range tickers {
+		record, ok := s.cachedDetailRecord(ticker, source)
+		if !ok {
+			return nil, false
+		}
+		records = append(records, record)
+	}
+	return records, true
+}
+
 func (s *Service) storeDetailRecordCache(record Record, source string) {
 	cacheKey := detailRecordCacheKey(record.Symbol, source)
+	now := time.Now()
+
+	s.mu.RLock()
+	existing, ok := s.detailRecordCache[cacheKey]
+	s.mu.RUnlock()
+	if ok && now.Before(existing.expiresAt) {
+		return
+	}
+
 	s.mu.Lock()
 	s.detailRecordCache[cacheKey] = detailRecordCacheEntry{
 		value:     cloneRecord(record),
-		expiresAt: time.Now().Add(detailsRecordCacheTTL),
+		expiresAt: now.Add(detailsRecordCacheTTL),
 	}
 	s.mu.Unlock()
+	s.persistCaches()
 }
 
 func detailRecordCacheKey(symbol, source string) string {
@@ -914,6 +1019,7 @@ func (s *Service) fetchClassificationWithCache(key string, ttl time.Duration, st
 		expiresAt: now.Add(ttl),
 	}
 	s.mu.Unlock()
+	s.persistCaches()
 	return value, nil
 }
 
@@ -1048,8 +1154,23 @@ func (s *Service) calculateIndustryMA50(ctx context.Context, record Record, allR
 			expiresAt: now.Add(industryMA50CacheTTL),
 		}
 		s.mu.Unlock()
+		s.persistCaches()
 	}
 	return result, nil
+}
+
+func (s *Service) initializePersistentCache() error {
+	baseDir, err := os.UserCacheDir()
+	if err != nil {
+		s.disablePersistentCache(err)
+		return err
+	}
+	s.cacheFilePath = filepath.Join(baseDir, "stock-sim", "details-cache-v2.json")
+	if err := s.loadPersistentCaches(); err != nil {
+		s.disablePersistentCache(err)
+		return err
+	}
+	return nil
 }
 
 func (s *Service) calculateIndustryMA50FromETF(ctx context.Context, ticker string) (*IndustryMA50, error) {
@@ -1223,6 +1344,7 @@ func (s *Service) fetchHistoricalPrices(ctx context.Context, symbol string, days
 		expiresAt: now.Add(historicalPricesCacheTTL),
 	}
 	s.mu.Unlock()
+	s.persistCaches()
 	return out, nil
 }
 

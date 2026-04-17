@@ -3,6 +3,7 @@ let apiBaseReady;
 const REQUEST_TIMEOUT_MS = 15_000;
 const RECOVERY_TIMEOUT_MS = 45_000;
 const RECOVERY_POLL_MS = 750;
+const STOCK_DETAILS_TIMEOUT_MS = 120_000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -242,6 +243,17 @@ export function parseStockDetailsCsvFile(file) {
 export function fetchStockDetails(payload) {
   return request("/api/stock-details/fetch-sctr", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    timeoutMs: STOCK_DETAILS_TIMEOUT_MS,
+    disableRecovery: true
+  });
+}
+
+export function fetchIndustryMA50(payload) {
+  return request("/api/stock-details/industry-ma50", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    timeoutMs: STOCK_DETAILS_TIMEOUT_MS,
+    disableRecovery: true
   });
 }

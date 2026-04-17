@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchStockDetails, parseStockDetailsCsvFile } from "../lib/api.js";
+import { fetchIndustryMA50, fetchStockDetails, parseStockDetailsCsvFile } from "../lib/api.js";
 
 const INDUSTRY_SOURCES = [
   { value: "finviz", label: "Finviz", description: "Finviz industry definitions with cached scraping." },
@@ -114,7 +114,7 @@ function buildProgressStages(sourceLabel, industrySource, tickerCount) {
     `${sourceLabel}: fetching SCTR snapshot for ${scope}...`,
     `${sourceLabel}: matching uploaded tickers against the latest SCTR rankings...`,
     `${sourceLabel}: enriching sector and industry data from ${sourceName}...`,
-    `${sourceLabel}: calculating industry strength and MA50 breadth...`
+    `${sourceLabel}: preparing table and industry strength data...`
   ];
 }
 
@@ -123,6 +123,7 @@ export default function StockDetailsPanel() {
   const latestRequestIdRef = useRef(0);
   const lastManualAppliedRef = useRef("");
   const progressTimerRef = useRef(0);
+  const ma50RunIdRef = useRef(0);
   const [industrySource, setIndustrySource] = useState("finviz");
   const [manualInput, setManualInput] = useState("");
   const [tickers, setTickers] = useState([]);
@@ -132,6 +133,7 @@ export default function StockDetailsPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState("");
   const [progressMessage, setProgressMessage] = useState("");
+  const [ma50Status, setMA50Status] = useState("");
   const [lastSourceLabel, setLastSourceLabel] = useState("");
   const [sortKey, setSortKey] = useState("SCTR");
   const [sortDir, setSortDir] = useState("desc");
@@ -164,6 +166,74 @@ export default function StockDetailsPanel() {
     setProgressMessage("");
   }
 
+  function stopMA50Updates() {
+    ma50RunIdRef.current += 1;
+    setMA50Status("");
+  }
+
+  async function loadIndustryMA50(records, requestId) {
+    const industries = Array.from(
+      new Set(
+        (records || [])
+          .map((record) => String(record?.industry || "").trim())
+          .filter(Boolean)
+      )
+    ).filter((industry) => !records.some((record) => String(record?.industry || "").trim() === industry && record?.industryPercentAboveMA50 != null));
+
+    if (industries.length === 0) {
+      setMA50Status("");
+      return;
+    }
+
+    const runId = ma50RunIdRef.current + 1;
+    ma50RunIdRef.current = runId;
+    let completed = 0;
+    setMA50Status(`MA50: loading 0/${industries.length} industries...`);
+
+    const workerCount = Math.min(2, industries.length);
+    async function worker(startIndex) {
+      for (let index = startIndex; index < industries.length; index += workerCount) {
+        const industry = industries[index];
+        try {
+          const payload = await fetchIndustryMA50({ industry, records });
+          if (latestRequestIdRef.current !== requestId || ma50RunIdRef.current !== runId) {
+            return;
+          }
+          if (payload?.ma50) {
+            setRecords((current) => current.map((record) => {
+              if (String(record?.industry || "").trim() !== industry) {
+                return record;
+              }
+              return {
+                ...record,
+                industryAboveMA50: payload.ma50.aboveMA,
+                industryPercentAboveMA50: payload.ma50.percentAboveMA50
+              };
+            }));
+          }
+        } catch {
+          if (latestRequestIdRef.current !== requestId || ma50RunIdRef.current !== runId) {
+            return;
+          }
+        }
+        completed += 1;
+        if (latestRequestIdRef.current !== requestId || ma50RunIdRef.current !== runId) {
+          return;
+        }
+        setMA50Status(
+          completed >= industries.length
+            ? ""
+            : `MA50: loaded ${completed}/${industries.length} industries...`
+        );
+      }
+    }
+
+    await Promise.all(Array.from({ length: workerCount }, (_, index) => worker(index)));
+    if (latestRequestIdRef.current === requestId && ma50RunIdRef.current === runId) {
+      setMA50Status("");
+    }
+  }
+
   function startProgressUpdates(stages) {
     stopProgressUpdates();
     if (!Array.isArray(stages) || stages.length === 0) {
@@ -189,6 +259,7 @@ export default function StockDetailsPanel() {
     if (sourceLabel) {
       setLastSourceLabel(sourceLabel);
     }
+    stopMA50Updates();
     if (background) {
       setRefreshing(true);
     } else {
@@ -206,6 +277,7 @@ export default function StockDetailsPanel() {
       }
       setRecords(Array.isArray(payload.records) ? payload.records : []);
       setMissingTickers(Array.isArray(payload.missingTickers) ? payload.missingTickers : []);
+      void loadIndustryMA50(Array.isArray(payload.records) ? payload.records : [], requestId);
       if (!background) {
         setMessage(`${sourceLabel}: loaded ${Array.isArray(payload.records) ? payload.records.length : 0} records.`);
       }
@@ -215,6 +287,7 @@ export default function StockDetailsPanel() {
       }
       setMessage(error?.message || String(error));
       if (!background) {
+        stopMA50Updates();
         setRecords([]);
         setMissingTickers([]);
       }
@@ -254,6 +327,7 @@ export default function StockDetailsPanel() {
   }
 
   useEffect(() => stopProgressUpdates, []);
+  useEffect(() => stopMA50Updates, []);
 
   function handleManualBlur() {
     const normalized = detectedTickers.join(",");
@@ -376,6 +450,7 @@ export default function StockDetailsPanel() {
       </div>
 
       {progressMessage ? <div className="stock-details-message stock-details-progress" aria-live="polite">{progressMessage}</div> : null}
+      {ma50Status ? <div className="stock-details-message stock-details-progress" aria-live="polite">{ma50Status}</div> : null}
       {message ? <div className={`stock-details-message${message.toLowerCase().includes("error") ? " error" : ""}`}>{message}</div> : null}
       {missingTickers.length > 0 ? (
         <div className="stock-details-message warning">
