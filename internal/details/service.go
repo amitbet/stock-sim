@@ -31,6 +31,12 @@ const (
 	maxIndustryStocksForMA50   = 20
 	defaultRequestTimeout      = 20 * time.Second
 	defaultClassificationDelay = 150 * time.Millisecond
+	// Keep these modest: Yahoo history requests already pass through a global
+	// rate limiter in data.Store, and Finviz classification remains delayed and
+	// sequential. These bounds reduce wall-clock time without creating a bursty
+	// request pattern.
+	maxConcurrentIndustryMA50 = 4
+	maxConcurrentStockHistory = 4
 )
 
 type Service struct {
@@ -288,22 +294,7 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 
 	stats := calculateStats(allRecords)
 	industryMap := buildIndustryLookupMap(allRecords, classified)
-	industryMA50 := make(map[string]IndustryMA50)
-	seenIndustries := make(map[string]struct{})
-	for _, record := range classified {
-		industry := strings.TrimSpace(record.Industry)
-		if industry == "" {
-			continue
-		}
-		if _, ok := seenIndustries[industry]; ok {
-			continue
-		}
-		seenIndustries[industry] = struct{}{}
-		ma50, err := s.calculateIndustryMA50(ctx, record, classified)
-		if err == nil && ma50 != nil {
-			industryMA50[industry] = *ma50
-		}
-	}
+	industryMA50 := s.calculateIndustryMA50Map(ctx, classified)
 
 	for idx := range classified {
 		rsIndustry, rsSector := calculateRelativeStrength(classified[idx], stats, industryMap)
@@ -314,6 +305,14 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 			classified[idx].IndustryPercentAbove50 = floatPtr(ma50.PercentAboveMA50)
 		}
 		s.storeDetailRecordCache(classified[idx], normalizedSource)
+	}
+
+	if len(missing) > 0 {
+		fallbackRecords := s.fetchFallbackRecords(ctx, missing, normalizedSource)
+		for _, record := range fallbackRecords {
+			classified = append(classified, record)
+			s.storeDetailRecordCache(record, normalizedSource)
+		}
 	}
 
 	sort.SliceStable(classified, func(i, j int) bool {
@@ -334,6 +333,132 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 		},
 		MissingTickers: missing,
 	}, nil
+}
+
+func (s *Service) fetchFallbackRecords(ctx context.Context, tickers []string, source string) []Record {
+	if len(tickers) == 0 {
+		return nil
+	}
+
+	type result struct {
+		record Record
+	}
+
+	results := make(chan result, len(tickers))
+	sem := make(chan struct{}, maxConcurrentStockHistory)
+	var wg sync.WaitGroup
+
+	for _, ticker := range tickers {
+		symbol := strings.ToUpper(strings.TrimSpace(ticker))
+		if symbol == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(symbol string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			record := Record{Symbol: symbol}
+
+			if s.yahooStore != nil {
+				if info, err := s.yahooStore.SymbolInfo(ctx, symbol); err == nil {
+					if name := strings.TrimSpace(info.Name); name != "" && name != symbol {
+						record.Name = name
+					}
+				}
+
+				now := time.Now()
+				from := now.AddDate(0, 0, -30)
+				if bars, err := s.yahooStore.LoadBars(ctx, symbol, from, now); err == nil && len(bars) > 0 {
+					latest := bars[len(bars)-1]
+					record.Date = latest.Date.Format("2006-01-02")
+					record.Close = floatPtr(latest.Close)
+					record.Vol = int64Ptr(int64(latest.Volume))
+				}
+			}
+
+			classificationSource := source
+			if classificationSource == "stockcharts" {
+				classificationSource = "yahoo"
+			}
+			enriched, err := s.enrichRecordsWithClassification(ctx, []Record{record}, classificationSource)
+			if err == nil && len(enriched) > 0 {
+				record = enriched[0]
+			}
+
+			enrichedRecord := []Record{record}
+			s.enrichRecordsWithEarningsDates(ctx, enrichedRecord)
+			results <- result{record: enrichedRecord[0]}
+		}(symbol)
+	}
+
+	wg.Wait()
+	close(results)
+
+	out := make([]Record, 0, len(tickers))
+	for item := range results {
+		out = append(out, item.record)
+	}
+	return out
+}
+
+func (s *Service) calculateIndustryMA50Map(ctx context.Context, records []Record) map[string]IndustryMA50 {
+	industryMA50 := make(map[string]IndustryMA50)
+	seenIndustries := make(map[string]Record)
+	for _, record := range records {
+		industry := strings.TrimSpace(record.Industry)
+		if industry == "" {
+			continue
+		}
+		if _, ok := seenIndustries[industry]; ok {
+			continue
+		}
+		seenIndustries[industry] = record
+	}
+	if len(seenIndustries) == 0 {
+		return industryMA50
+	}
+
+	type result struct {
+		industry string
+		value    *IndustryMA50
+	}
+
+	sem := make(chan struct{}, maxConcurrentIndustryMA50)
+	results := make(chan result, len(seenIndustries))
+	var wg sync.WaitGroup
+
+	for industry, record := range seenIndustries {
+		wg.Add(1)
+		go func(industry string, record Record) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			ma50, err := s.calculateIndustryMA50(ctx, record, records)
+			if err == nil && ma50 != nil {
+				results <- result{industry: industry, value: ma50}
+			}
+		}(industry, record)
+	}
+
+	wg.Wait()
+	close(results)
+
+	for item := range results {
+		industryMA50[item.industry] = *item.value
+	}
+
+	return industryMA50
 }
 
 func (s *Service) enrichRecordsWithEarningsDates(ctx context.Context, records []Record) {
@@ -960,47 +1085,12 @@ func (s *Service) calculateIndustryMA50FromStocks(ctx context.Context, industry 
 		stocks = stocks[:maxIndustryStocksForMA50]
 	}
 
-	pricesBySymbol := make([][]pricePoint, 0, len(stocks))
-	for _, stock := range stocks {
-		prices, err := s.fetchHistoricalPrices(ctx, stock.Symbol, defaultHistoricalLookback)
-		if err != nil || len(prices) < 50 {
-			continue
-		}
-		pricesBySymbol = append(pricesBySymbol, prices)
-	}
+	pricesBySymbol := s.fetchIndustryStockHistories(ctx, stocks)
 	if len(pricesBySymbol) == 0 {
 		return nil, nil
 	}
 
-	dateSet := make(map[string]struct{})
-	for _, series := range pricesBySymbol {
-		for _, point := range series {
-			dateSet[point.Date] = struct{}{}
-		}
-	}
-	dates := make([]string, 0, len(dateSet))
-	for date := range dateSet {
-		dates = append(dates, date)
-	}
-	sort.Strings(dates)
-
-	index := make([]pricePoint, 0, len(dates))
-	for _, date := range dates {
-		sum := 0.0
-		count := 0
-		for _, series := range pricesBySymbol {
-			for _, point := range series {
-				if point.Date == date {
-					sum += point.Close
-					count++
-					break
-				}
-			}
-		}
-		if count > 0 {
-			index = append(index, pricePoint{Date: date, Close: sum / float64(count)})
-		}
-	}
+	index := averageIndexFromSeries(pricesBySymbol)
 	if len(index) < 50 {
 		return nil, nil
 	}
@@ -1020,6 +1110,84 @@ func (s *Service) calculateIndustryMA50FromStocks(ctx context.Context, industry 
 		StocksUsed:       &stocksUsed,
 		TotalStocks:      &totalStocks,
 	}, nil
+}
+
+func (s *Service) fetchIndustryStockHistories(ctx context.Context, stocks []Record) [][]pricePoint {
+	type result struct {
+		prices []pricePoint
+	}
+
+	results := make(chan result, len(stocks))
+	sem := make(chan struct{}, maxConcurrentStockHistory)
+	var wg sync.WaitGroup
+
+	for _, stock := range stocks {
+		symbol := stock.Symbol
+		if strings.TrimSpace(symbol) == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(symbol string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			prices, err := s.fetchHistoricalPrices(ctx, symbol, defaultHistoricalLookback)
+			if err != nil || len(prices) < 50 {
+				return
+			}
+			results <- result{prices: prices}
+		}(symbol)
+	}
+
+	wg.Wait()
+	close(results)
+
+	pricesBySymbol := make([][]pricePoint, 0, len(stocks))
+	for item := range results {
+		pricesBySymbol = append(pricesBySymbol, item.prices)
+	}
+	return pricesBySymbol
+}
+
+func averageIndexFromSeries(pricesBySymbol [][]pricePoint) []pricePoint {
+	type aggregate struct {
+		sum   float64
+		count int
+	}
+
+	byDate := make(map[string]aggregate)
+	for _, series := range pricesBySymbol {
+		for _, point := range series {
+			entry := byDate[point.Date]
+			entry.sum += point.Close
+			entry.count++
+			byDate[point.Date] = entry
+		}
+	}
+
+	dates := make([]string, 0, len(byDate))
+	for date := range byDate {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+
+	index := make([]pricePoint, 0, len(dates))
+	for _, date := range dates {
+		entry := byDate[date]
+		if entry.count == 0 {
+			continue
+		}
+		index = append(index, pricePoint{
+			Date:  date,
+			Close: entry.sum / float64(entry.count),
+		})
+	}
+	return index
 }
 
 func (s *Service) fetchHistoricalPrices(ctx context.Context, symbol string, days int) ([]pricePoint, error) {
@@ -1321,6 +1489,10 @@ func recordScore(value *float64) float64 {
 }
 
 func floatPtr(value float64) *float64 {
+	return &value
+}
+
+func int64Ptr(value int64) *int64 {
 	return &value
 }
 

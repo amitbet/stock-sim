@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchStockDetails, parseStockDetailsCsvFile } from "../lib/api.js";
 
 const INDUSTRY_SOURCES = [
@@ -107,10 +107,22 @@ function recordsToCsv(records) {
   return `${lines.join("\n")}\n`;
 }
 
+function buildProgressStages(sourceLabel, industrySource, tickerCount) {
+  const sourceName = INDUSTRY_SOURCES.find((source) => source.value === industrySource)?.label || industrySource;
+  const scope = tickerCount > 0 ? `${tickerCount} tickers` : "tickers";
+  return [
+    `${sourceLabel}: fetching SCTR snapshot for ${scope}...`,
+    `${sourceLabel}: matching uploaded tickers against the latest SCTR rankings...`,
+    `${sourceLabel}: enriching sector and industry data from ${sourceName}...`,
+    `${sourceLabel}: calculating industry strength and MA50 breadth...`
+  ];
+}
+
 export default function StockDetailsPanel() {
   const fileInputRef = useRef(null);
   const latestRequestIdRef = useRef(0);
   const lastManualAppliedRef = useRef("");
+  const progressTimerRef = useRef(0);
   const [industrySource, setIndustrySource] = useState("finviz");
   const [manualInput, setManualInput] = useState("");
   const [tickers, setTickers] = useState([]);
@@ -119,6 +131,7 @@ export default function StockDetailsPanel() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState("");
+  const [progressMessage, setProgressMessage] = useState("");
   const [lastSourceLabel, setLastSourceLabel] = useState("");
   const [sortKey, setSortKey] = useState("SCTR");
   const [sortDir, setSortDir] = useState("desc");
@@ -143,6 +156,27 @@ export default function StockDetailsPanel() {
     setSortDir(nextKey === "SCTR" || nextKey === "industryRS" || nextKey === "sectorRS" ? "desc" : "asc");
   }
 
+  function stopProgressUpdates() {
+    if (progressTimerRef.current) {
+      window.clearInterval(progressTimerRef.current);
+      progressTimerRef.current = 0;
+    }
+    setProgressMessage("");
+  }
+
+  function startProgressUpdates(stages) {
+    stopProgressUpdates();
+    if (!Array.isArray(stages) || stages.length === 0) {
+      return;
+    }
+    let index = 0;
+    setProgressMessage(stages[0]);
+    progressTimerRef.current = window.setInterval(() => {
+      index = Math.min(index + 1, stages.length - 1);
+      setProgressMessage(stages[index]);
+    }, 1400);
+  }
+
   async function runFetch(tickers, sourceLabel, sourceOverride = industrySource, options = {}) {
     if (!Array.isArray(tickers) || tickers.length === 0) {
       return;
@@ -160,6 +194,7 @@ export default function StockDetailsPanel() {
     } else {
       setLoading(true);
       setMessage("");
+      startProgressUpdates(buildProgressStages(sourceLabel, sourceOverride, uniqueTickers.length));
     }
     try {
       const payload = await fetchStockDetails({
@@ -185,6 +220,7 @@ export default function StockDetailsPanel() {
       }
     } finally {
       if (latestRequestIdRef.current === requestId) {
+        stopProgressUpdates();
         if (background) {
           setRefreshing(false);
         } else {
@@ -200,6 +236,11 @@ export default function StockDetailsPanel() {
     }
     setLoading(true);
     setMessage(`Parsing ${file.name}...`);
+    startProgressUpdates([
+      `CSV: reading ${file.name}...`,
+      `CSV: detecting ticker column in ${file.name}...`,
+      `CSV: preparing tickers for SCTR fetch...`
+    ]);
     try {
       const payload = await parseStockDetailsCsvFile(file);
       const tickers = Array.isArray(payload.tickers) ? payload.tickers : [];
@@ -207,9 +248,12 @@ export default function StockDetailsPanel() {
       await runFetch(tickers, "CSV");
     } catch (error) {
       setLoading(false);
+      stopProgressUpdates();
       setMessage(error?.message || String(error));
     }
   }
+
+  useEffect(() => stopProgressUpdates, []);
 
   function handleManualBlur() {
     const normalized = detectedTickers.join(",");
@@ -331,6 +375,7 @@ export default function StockDetailsPanel() {
         </div>
       </div>
 
+      {progressMessage ? <div className="stock-details-message stock-details-progress" aria-live="polite">{progressMessage}</div> : null}
       {message ? <div className={`stock-details-message${message.toLowerCase().includes("error") ? " error" : ""}`}>{message}</div> : null}
       {missingTickers.length > 0 ? (
         <div className="stock-details-message warning">
