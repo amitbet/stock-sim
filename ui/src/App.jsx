@@ -561,7 +561,6 @@ export default function App() {
         <div className="hero-copy">
           <div className="eyebrow">Market replay workstation</div>
           <h1>Stock Simulator</h1>
-          <p>Click a sell date, replay staged re-entry, compare outcomes.</p>
         </div>
         <div className="hero-right">
           <button

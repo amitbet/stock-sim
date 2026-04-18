@@ -346,7 +346,6 @@ export default function StockDetailsPanel() {
         <div>
           <div className="stock-details-kicker">Ticker ranking</div>
           <h2>Stock Details</h2>
-          <p>Fetch SCTR rankings, enrich sector and industry classifications, and compare industry strength.</p>
         </div>
         <div className="stock-details-header-actions">
           <div className="stock-details-meta">
@@ -358,11 +357,18 @@ export default function StockDetailsPanel() {
           </div>
           <button
             type="button"
-            className="ghost-button"
+            className="stock-details-icon-button"
             disabled={records.length === 0}
             onClick={() => downloadCsv("stock-details.csv", recordsToCsv(sortedRecords))}
+            aria-label="Export CSV"
+            title="Export CSV"
           >
-            Export CSV
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path
+                d="M10 3.5a.75.75 0 0 1 .75.75v6.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 0 1 1.06-1.06l2.22 2.22V4.25A.75.75 0 0 1 10 3.5Zm-5 10a.75.75 0 0 1 .75.75v.5c0 .41.34.75.75.75h7a.75.75 0 0 0 .75-.75v-.5a.75.75 0 0 1 1.5 0v.5A2.25 2.25 0 0 1 13.5 17h-7a2.25 2.25 0 0 1-2.25-2.25v-.5A.75.75 0 0 1 5 13.5Z"
+                fill="currentColor"
+              />
+            </svg>
           </button>
         </div>
       </div>
