@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const persistentCacheVersion = 2
+const persistentCacheVersion = 3
 
 type persistentClassificationEntry struct {
 	Value     *Classification `json:"value"`
@@ -47,7 +47,7 @@ type persistentEarningsCalendarEntry struct {
 
 type persistentCacheState struct {
 	Version          int                                        `json:"version"`
-	SCTRSnapshot     *persistentSnapshotEntry                   `json:"sctrSnapshot,omitempty"`
+	SCTRSnapshots    map[string]persistentSnapshotEntry         `json:"sctrSnapshots,omitempty"`
 	DetailRecords    map[string]persistentDetailRecordEntry     `json:"detailRecords"`
 	Finviz           map[string]persistentClassificationEntry   `json:"finviz"`
 	Yahoo            map[string]persistentClassificationEntry   `json:"yahoo"`
@@ -79,7 +79,7 @@ func (s *Service) loadPersistentCaches() error {
 	}
 
 	now := time.Now()
-	snapshotLoaded := false
+	loadedViews := 0
 	detailCount := 0
 	finvizCount := 0
 	yahooCount := 0
@@ -90,12 +90,14 @@ func (s *Service) loadPersistentCaches() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if state.SCTRSnapshot != nil && state.SCTRSnapshot.ExpiresAt.After(now) {
-		s.sctrSnapshotCache = sctrSnapshotCacheEntry{
-			value:     cloneRecords(state.SCTRSnapshot.Value),
-			expiresAt: state.SCTRSnapshot.ExpiresAt,
+	for view, entry := range state.SCTRSnapshots {
+		if entry.ExpiresAt.After(now) {
+			s.sctrSnapshotCache[view] = sctrSnapshotCacheEntry{
+				value:     cloneRecords(entry.Value),
+				expiresAt: entry.ExpiresAt,
+			}
+			loadedViews++
 		}
-		snapshotLoaded = true
 	}
 	for key, entry := range state.DetailRecords {
 		if entry.ExpiresAt.After(now) {
@@ -162,8 +164,8 @@ func (s *Service) loadPersistentCaches() error {
 	}
 
 	log.Printf(
-		"stock-sim: loaded details cache from disk (snapshot=%t detailRecords=%d finviz=%d yahoo=%d earningsDates=%d earningsCalendar=%d historicalPrices=%d industryMA50=%d)",
-		snapshotLoaded,
+		"stock-sim: loaded details cache from disk (sctrViews=%d detailRecords=%d finviz=%d yahoo=%d earningsDates=%d earningsCalendar=%d historicalPrices=%d industryMA50=%d)",
+		loadedViews,
 		detailCount,
 		finvizCount,
 		yahooCount,
@@ -214,6 +216,7 @@ func (s *Service) snapshotPersistentCaches() persistentCacheState {
 	now := time.Now()
 	state := persistentCacheState{
 		Version:          persistentCacheVersion,
+		SCTRSnapshots:    make(map[string]persistentSnapshotEntry),
 		DetailRecords:    make(map[string]persistentDetailRecordEntry),
 		Finviz:           make(map[string]persistentClassificationEntry),
 		Yahoo:            make(map[string]persistentClassificationEntry),
@@ -226,10 +229,12 @@ func (s *Service) snapshotPersistentCaches() persistentCacheState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.sctrSnapshotCache.value != nil && s.sctrSnapshotCache.expiresAt.After(now) {
-		state.SCTRSnapshot = &persistentSnapshotEntry{
-			Value:     cloneRecords(s.sctrSnapshotCache.value),
-			ExpiresAt: s.sctrSnapshotCache.expiresAt,
+	for view, entry := range s.sctrSnapshotCache {
+		if entry.value != nil && entry.expiresAt.After(now) {
+			state.SCTRSnapshots[view] = persistentSnapshotEntry{
+				Value:     cloneRecords(entry.value),
+				ExpiresAt: entry.expiresAt,
+			}
 		}
 	}
 	for key, entry := range s.detailRecordCache {

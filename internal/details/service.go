@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	defaultSCTRURL             = "https://stockcharts.com/j-sum/sum?cmd=sctr&view=L&timeframe=I"
 	detailsRecordCacheTTL      = 6 * time.Hour
 	sctrSnapshotCacheTTL       = 6 * time.Hour
 	classificationCacheTTL     = 180 * 24 * time.Hour
@@ -50,7 +49,7 @@ type Service struct {
 	diskMu              sync.Mutex
 	cacheFilePath       string
 	persistentCacheOK   bool
-	sctrSnapshotCache   sctrSnapshotCacheEntry
+	sctrSnapshotCache   map[string]sctrSnapshotCacheEntry
 	detailRecordCache   map[string]detailRecordCacheEntry
 	finvizCache         map[string]classificationCacheEntry
 	yahooCache          map[string]classificationCacheEntry
@@ -193,6 +192,17 @@ type sctrRawItem struct {
 	Sector    any `json:"sector"`
 }
 
+type sctrViewConfig struct {
+	view string
+	url  string
+}
+
+var sctrViews = []sctrViewConfig{
+	{view: "S", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=S&timeframe=I"},
+	{view: "M", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=M&timeframe=I"},
+	{view: "L", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=L&timeframe=I"},
+}
+
 var (
 	finvizSectorPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)Sector</td>\s*<td[^>]*>([^<]+)</td>`),
@@ -214,6 +224,7 @@ func NewService(yahooStore *data.Store) *Service {
 		httpClient:          &http.Client{Timeout: defaultRequestTimeout},
 		yahooStore:          yahooStore,
 		persistentCacheOK:   true,
+		sctrSnapshotCache:   make(map[string]sctrSnapshotCacheEntry),
 		detailRecordCache:   make(map[string]detailRecordCacheEntry),
 		finvizCache:         make(map[string]classificationCacheEntry),
 		yahooCache:          make(map[string]classificationCacheEntry),
@@ -560,14 +571,67 @@ func (s *Service) enrichRecordsWithEarningsDates(ctx context.Context, records []
 
 func (s *Service) fetchSCTRJSON(ctx context.Context) ([]Record, error) {
 	now := time.Now()
+	combined := make([]Record, 0)
+	missingViews := make([]sctrViewConfig, 0, len(sctrViews))
+
 	s.mu.RLock()
-	cachedSnapshot := s.sctrSnapshotCache
+	for _, cfg := range sctrViews {
+		cachedSnapshot, ok := s.sctrSnapshotCache[cfg.view]
+		if ok && cachedSnapshot.value != nil && now.Before(cachedSnapshot.expiresAt) {
+			combined = append(combined, cloneRecords(cachedSnapshot.value)...)
+			continue
+		}
+		missingViews = append(missingViews, cfg)
+	}
 	s.mu.RUnlock()
-	if cachedSnapshot.value != nil && now.Before(cachedSnapshot.expiresAt) {
-		return cloneRecords(cachedSnapshot.value), nil
+
+	if len(missingViews) == 0 {
+		return dedupeSCTRRecords(combined), nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, defaultSCTRURL, nil)
+	type fetchResult struct {
+		view    string
+		records []Record
+		err     error
+	}
+
+	results := make(chan fetchResult, len(missingViews))
+	var wg sync.WaitGroup
+	for _, cfg := range missingViews {
+		wg.Add(1)
+		go func(cfg sctrViewConfig) {
+			defer wg.Done()
+			records, err := s.fetchSCTRView(ctx, cfg)
+			results <- fetchResult{view: cfg.view, records: records, err: err}
+		}(cfg)
+	}
+	wg.Wait()
+	close(results)
+
+	fetchedAny := false
+	for result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		combined = append(combined, result.records...)
+		s.mu.Lock()
+		s.sctrSnapshotCache[result.view] = sctrSnapshotCacheEntry{
+			value:     cloneRecords(result.records),
+			expiresAt: now.Add(sctrSnapshotCacheTTL),
+		}
+		s.mu.Unlock()
+		fetchedAny = true
+	}
+
+	if fetchedAny {
+		s.persistCaches()
+	}
+
+	return dedupeSCTRRecords(combined), nil
+}
+
+func (s *Service) fetchSCTRView(ctx context.Context, cfg sctrViewConfig) ([]Record, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -578,32 +642,77 @@ func (s *Service) fetchSCTRJSON(ctx context.Context) ([]Record, error) {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch stockcharts sctr: %w", err)
+		return nil, fmt.Errorf("fetch stockcharts sctr view %s: %w", cfg.view, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch stockcharts sctr: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("fetch stockcharts sctr view %s: status %d", cfg.view, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read stockcharts sctr response: %w", err)
+		return nil, fmt.Errorf("read stockcharts sctr view %s response: %w", cfg.view, err)
 	}
 
 	var raw []sctrRawItem
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("decode stockcharts sctr: %w", err)
+		return nil, fmt.Errorf("decode stockcharts sctr view %s: %w", cfg.view, err)
 	}
 
-	records := normalizeSCTRRecords(raw)
-	s.mu.Lock()
-	s.sctrSnapshotCache = sctrSnapshotCacheEntry{
-		value:     cloneRecords(records),
-		expiresAt: now.Add(sctrSnapshotCacheTTL),
+	return normalizeSCTRRecords(raw), nil
+}
+
+func dedupeSCTRRecords(records []Record) []Record {
+	if len(records) == 0 {
+		return records
 	}
-	s.mu.Unlock()
-	s.persistCaches()
-	return records, nil
+
+	deduped := make([]Record, 0, len(records))
+	indexBySymbol := make(map[string]int, len(records))
+	for _, record := range records {
+		symbol := strings.ToUpper(strings.TrimSpace(record.Symbol))
+		if symbol == "" {
+			continue
+		}
+		if idx, ok := indexBySymbol[symbol]; ok {
+			deduped[idx] = mergeSCTRRecord(deduped[idx], record)
+			continue
+		}
+		indexBySymbol[symbol] = len(deduped)
+		deduped = append(deduped, record)
+	}
+	return deduped
+}
+
+func mergeSCTRRecord(current Record, candidate Record) Record {
+	if current.Date == "" && candidate.Date != "" {
+		current.Date = candidate.Date
+	}
+	if current.Name == "" && candidate.Name != "" {
+		current.Name = candidate.Name
+	}
+	if current.SCTR == nil && candidate.SCTR != nil {
+		current.SCTR = candidate.SCTR
+	}
+	if current.Delta == nil && candidate.Delta != nil {
+		current.Delta = candidate.Delta
+	}
+	if current.Close == nil && candidate.Close != nil {
+		current.Close = candidate.Close
+	}
+	if current.MarketCap == nil && candidate.MarketCap != nil {
+		current.MarketCap = candidate.MarketCap
+	}
+	if current.Vol == nil && candidate.Vol != nil {
+		current.Vol = candidate.Vol
+	}
+	if current.Industry == "" && candidate.Industry != "" {
+		current.Industry = candidate.Industry
+	}
+	if current.Sector == "" && candidate.Sector != "" {
+		current.Sector = candidate.Sector
+	}
+	return current
 }
 
 func normalizeSCTRRecords(raw []sctrRawItem) []Record {
