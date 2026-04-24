@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const persistentCacheVersion = 3
+const persistentCacheVersion = 8
 
 type persistentClassificationEntry struct {
 	Value     *Classification `json:"value"`

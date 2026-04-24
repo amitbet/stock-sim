@@ -8,4 +8,6 @@ export function CheckForUpdates():Promise<updater.Status>;
 
 export function GetAPIBaseURL():Promise<string>;
 
+export function SaveCSV(arg1:string,arg2:string):Promise<string>;
+
 export function Version():Promise<string>;

@@ -8,8 +8,9 @@ const INDUSTRY_SOURCES = [
 ];
 
 const COLUMNS = [
-  { key: "date", label: "Date" },
   { key: "symbol", label: "Symbol" },
+  { key: "criteria", label: "Criteria" },
+  { key: "type", label: "Type", center: true },
   { key: "earningsReportDate", label: "Earnings" },
   { key: "name", label: "Name" },
   { key: "SCTR", label: "SCTR", numeric: true },
@@ -23,6 +24,8 @@ const COLUMNS = [
   { key: "industry", label: "Industry" },
   { key: "sector", label: "Sector" }
 ];
+
+const INDUSTRY_STRENGTH_COLUMN_KEYS = new Set(["industryRS", "sectorRS", "industryPercentAboveMA50"]);
 
 function extractTickers(text) {
   return Array.from(
@@ -69,7 +72,70 @@ function formatValue(value, options = {}) {
   return String(value);
 }
 
-function downloadCsv(filename, content) {
+function normalizeTicker(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function buildCsvExtrasByTicker(payload) {
+  const criteriaByTicker = payload?.criteriaByTicker && typeof payload.criteriaByTicker === "object"
+    ? payload.criteriaByTicker
+    : {};
+  const extras = {};
+  for (const symbol of Object.keys(criteriaByTicker)) {
+    const normalized = normalizeTicker(symbol);
+    if (!normalized) {
+      continue;
+    }
+    const extra = {};
+    if (criteriaByTicker[symbol] != null && String(criteriaByTicker[symbol]).trim() !== "") {
+      extra.criteria = String(criteriaByTicker[symbol]).trim();
+    }
+    if (Object.keys(extra).length > 0) {
+      extras[normalized] = extra;
+    }
+  }
+  return extras;
+}
+
+function mergeRecordExtras(records, extrasByTicker = {}) {
+  return (records || []).map((record) => {
+    const extra = extrasByTicker[normalizeTicker(record?.symbol)];
+    return extra ? { ...record, ...extra } : record;
+  });
+}
+
+function mergeRecordsBySymbol(existingRecords, newRecords) {
+  const merged = [];
+  const indexBySymbol = new Map();
+  for (const record of existingRecords || []) {
+    const symbol = normalizeTicker(record?.symbol);
+    if (!symbol) {
+      continue;
+    }
+    indexBySymbol.set(symbol, merged.length);
+    merged.push(record);
+  }
+  for (const record of newRecords || []) {
+    const symbol = normalizeTicker(record?.symbol);
+    if (!symbol) {
+      continue;
+    }
+    const existingIndex = indexBySymbol.get(symbol);
+    if (existingIndex == null) {
+      indexBySymbol.set(symbol, merged.length);
+      merged.push(record);
+    } else {
+      merged[existingIndex] = { ...merged[existingIndex], ...record };
+    }
+  }
+  return merged;
+}
+
+function mergeStrings(existingValues, newValues) {
+  return Array.from(new Set([...(existingValues || []), ...(newValues || [])].map(normalizeTicker).filter(Boolean)));
+}
+
+function downloadCsvFallback(filename, content) {
   const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -81,8 +147,17 @@ function downloadCsv(filename, content) {
   URL.revokeObjectURL(url);
 }
 
-function recordsToCsv(records) {
-  const columns = COLUMNS.map((column) => column.key);
+async function saveCsv(filename, content) {
+  if (typeof window !== "undefined" && window.go?.main?.App?.SaveCSV) {
+    const { SaveCSV } = await import("../../wailsjs/go/main/App.js");
+    return SaveCSV(filename, content);
+  }
+  downloadCsvFallback(filename, content);
+  return filename;
+}
+
+function recordsToCsv(records, columns = COLUMNS) {
+  const columnKeys = columns.map((column) => column.key);
   const escape = (value) => {
     const text = value == null ? "" : String(value);
     if (/[",\r\n]/.test(text)) {
@@ -91,10 +166,10 @@ function recordsToCsv(records) {
     return text;
   };
 
-  const lines = [columns.join(",")];
+  const lines = [columnKeys.join(",")];
   for (const record of records || []) {
     lines.push(
-      columns
+      columnKeys
         .map((column) => {
           if (column === "industryPercentAboveMA50") {
             return escape(record?.industryPercentAboveMA50);
@@ -107,15 +182,19 @@ function recordsToCsv(records) {
   return `${lines.join("\n")}\n`;
 }
 
-function buildProgressStages(sourceLabel, industrySource, tickerCount) {
+function buildProgressStages(sourceLabel, industrySource, tickerCount, includeIndustryStrength) {
   const sourceName = INDUSTRY_SOURCES.find((source) => source.value === industrySource)?.label || industrySource;
   const scope = tickerCount > 0 ? `${tickerCount} tickers` : "tickers";
-  return [
+  const stages = [
     `${sourceLabel}: fetching SCTR snapshot for ${scope}...`,
     `${sourceLabel}: matching uploaded tickers against the latest SCTR rankings...`,
     `${sourceLabel}: enriching sector and industry data from ${sourceName}...`,
-    `${sourceLabel}: preparing table and industry strength data...`
+    `${sourceLabel}: preparing table data...`
   ];
+  if (includeIndustryStrength) {
+    stages[stages.length - 1] = `${sourceLabel}: preparing table and industry strength data...`;
+  }
+  return stages;
 }
 
 export default function StockDetailsPanel() {
@@ -135,6 +214,8 @@ export default function StockDetailsPanel() {
   const [progressMessage, setProgressMessage] = useState("");
   const [ma50Status, setMA50Status] = useState("");
   const [lastSourceLabel, setLastSourceLabel] = useState("");
+  const [recordExtrasByTicker, setRecordExtrasByTicker] = useState({});
+  const [showIndustryStrength, setShowIndustryStrength] = useState(false);
   const [sortKey, setSortKey] = useState("SCTR");
   const [sortDir, setSortDir] = useState("desc");
   const [dragOver, setDragOver] = useState(false);
@@ -148,6 +229,11 @@ export default function StockDetailsPanel() {
     });
     return copy;
   }, [records, sortDir, sortKey]);
+
+  const visibleColumns = useMemo(
+    () => COLUMNS.filter((column) => showIndustryStrength || !INDUSTRY_STRENGTH_COLUMN_KEYS.has(column.key)),
+    [showIndustryStrength]
+  );
 
   function toggleSort(nextKey) {
     if (sortKey === nextKey) {
@@ -247,15 +333,21 @@ export default function StockDetailsPanel() {
     }, 1400);
   }
 
-  async function runFetch(tickers, sourceLabel, sourceOverride = industrySource, options = {}) {
-    if (!Array.isArray(tickers) || tickers.length === 0) {
+  async function runFetch(rawTickers, sourceLabel, sourceOverride = industrySource, options = {}) {
+    if (!Array.isArray(rawTickers) || rawTickers.length === 0) {
       return;
     }
     const background = options.background === true;
-    const uniqueTickers = Array.from(new Set(tickers.map((ticker) => String(ticker).trim().toUpperCase()).filter(Boolean)));
+    const append = options.append === true;
+    const extrasByTicker = options.extrasByTicker || (background ? recordExtrasByTicker : {});
+    const includeIndustryStrength = options.includeIndustryStrength ?? showIndustryStrength;
+    const forceRefresh = options.forceRefresh === true;
+    const uniqueTickers = Array.from(new Set(rawTickers.map((ticker) => String(ticker).trim().toUpperCase()).filter(Boolean)));
+    const nextTickerState = append ? mergeStrings(tickers, uniqueTickers) : uniqueTickers;
     const requestId = latestRequestIdRef.current + 1;
     latestRequestIdRef.current = requestId;
-    setTickers(uniqueTickers);
+    setTickers(nextTickerState);
+    setRecordExtrasByTicker(extrasByTicker);
     if (sourceLabel) {
       setLastSourceLabel(sourceLabel);
     }
@@ -265,21 +357,30 @@ export default function StockDetailsPanel() {
     } else {
       setLoading(true);
       setMessage("");
-      startProgressUpdates(buildProgressStages(sourceLabel, sourceOverride, uniqueTickers.length));
+      startProgressUpdates(buildProgressStages(sourceLabel, sourceOverride, uniqueTickers.length, includeIndustryStrength));
     }
     try {
       const payload = await fetchStockDetails({
         tickers: uniqueTickers,
-        industrySource: sourceOverride
+        industrySource: sourceOverride,
+        includeIndustryStrength,
+        forceRefresh
       });
       if (latestRequestIdRef.current !== requestId) {
         return;
       }
-      setRecords(Array.isArray(payload.records) ? payload.records : []);
-      setMissingTickers(Array.isArray(payload.missingTickers) ? payload.missingTickers : []);
-      void loadIndustryMA50(Array.isArray(payload.records) ? payload.records : [], requestId);
+      const fetchedRecords = mergeRecordExtras(Array.isArray(payload.records) ? payload.records : [], extrasByTicker);
+      const nextRecords = append ? mergeRecordsBySymbol(records, fetchedRecords) : fetchedRecords;
+      setRecords(nextRecords);
+      const nextMissingTickers = append
+        ? mergeStrings(missingTickers, Array.isArray(payload.missingTickers) ? payload.missingTickers : [])
+        : Array.isArray(payload.missingTickers) ? payload.missingTickers : [];
+      setMissingTickers(nextMissingTickers);
+      if (includeIndustryStrength) {
+        void loadIndustryMA50(nextRecords, requestId);
+      }
       if (!background) {
-        setMessage(`${sourceLabel}: loaded ${Array.isArray(payload.records) ? payload.records.length : 0} records.`);
+        setMessage(`${sourceLabel}: loaded ${append ? fetchedRecords.length : nextRecords.length} records.`);
       }
     } catch (error) {
       if (latestRequestIdRef.current !== requestId) {
@@ -317,8 +418,9 @@ export default function StockDetailsPanel() {
     try {
       const payload = await parseStockDetailsCsvFile(file);
       const tickers = Array.isArray(payload.tickers) ? payload.tickers : [];
+      const extrasByTicker = buildCsvExtrasByTicker(payload);
       setMessage(`Parsed ${tickers.length} tickers from ${payload.tickerColumnName || `column ${payload.tickerColumnIndex}`}.`);
-      await runFetch(tickers, "CSV");
+      await runFetch(tickers, "CSV", industrySource, { extrasByTicker });
     } catch (error) {
       setLoading(false);
       stopProgressUpdates();
@@ -328,16 +430,27 @@ export default function StockDetailsPanel() {
 
   useEffect(() => stopProgressUpdates, []);
   useEffect(() => stopMA50Updates, []);
+  useEffect(() => {
+    if (!showIndustryStrength && INDUSTRY_STRENGTH_COLUMN_KEYS.has(sortKey)) {
+      setSortKey("SCTR");
+      setSortDir("desc");
+    }
+  }, [showIndustryStrength, sortKey]);
 
-  function handleManualBlur() {
-    const normalized = detectedTickers.join(",");
-    if (normalized === lastManualAppliedRef.current) {
+  function handleManualFetch() {
+    lastManualAppliedRef.current = detectedTickers.join(",");
+    void runFetch(detectedTickers, "Manual");
+  }
+
+  function handleManualAppend() {
+    const existingTickers = new Set(tickers);
+    const newTickers = detectedTickers.filter((ticker) => !existingTickers.has(ticker));
+    if (newTickers.length === 0) {
+      setMessage("Manual append: no new tickers to append.");
       return;
     }
-    lastManualAppliedRef.current = normalized;
-    if (detectedTickers.length > 0) {
-      void runFetch(detectedTickers, "Manual");
-    }
+    lastManualAppliedRef.current = detectedTickers.join(",");
+    void runFetch(newTickers, "Manual append", industrySource, { append: true });
   }
 
   return (
@@ -359,7 +472,16 @@ export default function StockDetailsPanel() {
             type="button"
             className="stock-details-icon-button"
             disabled={records.length === 0}
-            onClick={() => downloadCsv("stock-details.csv", recordsToCsv(sortedRecords))}
+            onClick={async () => {
+              try {
+                const savedPath = await saveCsv("stock-details.csv", recordsToCsv(sortedRecords, visibleColumns));
+                if (savedPath) {
+                  setMessage(`Exported CSV to ${savedPath}.`);
+                }
+              } catch (error) {
+                setMessage(error?.message || String(error));
+              }
+            }}
             aria-label="Export CSV"
             title="Export CSV"
           >
@@ -374,24 +496,49 @@ export default function StockDetailsPanel() {
       </div>
 
       <div className="stock-details-source">
-        <label htmlFor="industry-source">Industry Source</label>
-        <select
-          id="industry-source"
-          value={industrySource}
-          onChange={(event) => {
-            const nextSource = event.target.value;
-            setIndustrySource(nextSource);
-            if (tickers.length > 0) {
-              void runFetch(tickers, lastSourceLabel, nextSource, { background: true });
-            }
-          }}
-        >
-          {INDUSTRY_SOURCES.map((source) => (
-            <option key={source.value} value={source.value}>
-              {source.label}
-            </option>
-          ))}
-        </select>
+        <div className="stock-details-source-row">
+          <div className="stock-details-source-field">
+            <label htmlFor="industry-source">Industry Source</label>
+            <select
+              id="industry-source"
+              value={industrySource}
+              onChange={(event) => {
+                const nextSource = event.target.value;
+                setIndustrySource(nextSource);
+                if (tickers.length > 0) {
+                  void runFetch(tickers, lastSourceLabel, nextSource, { background: true });
+                }
+              }}
+            >
+              {INDUSTRY_SOURCES.map((source) => (
+                <option key={source.value} value={source.value}>
+                  {source.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="stock-details-toggle">
+            <input
+              type="checkbox"
+              checked={showIndustryStrength}
+              onChange={(event) => {
+                const nextValue = event.target.checked;
+                setShowIndustryStrength(nextValue);
+                if (!nextValue) {
+                  stopMA50Updates();
+                  return;
+                }
+                if (tickers.length > 0) {
+                  void runFetch(tickers, lastSourceLabel, industrySource, {
+                    background: true,
+                    includeIndustryStrength: true
+                  });
+                }
+              }}
+            />
+            <span>Industry Strength</span>
+          </label>
+        </div>
         <p>{INDUSTRY_SOURCES.find((source) => source.value === industrySource)?.description}</p>
       </div>
 
@@ -435,22 +582,28 @@ export default function StockDetailsPanel() {
             className="stock-details-textarea"
             value={manualInput}
             onChange={(event) => setManualInput(event.target.value)}
-            onBlur={handleManualBlur}
             placeholder={"Paste tickers separated by comma, space, or newline.\nExample: AAPL MSFT NVDA"}
           />
           <div className="stock-details-card-row">
             <span>{detectedTickers.length} detected</span>
-            <button
-              type="button"
-              className="primary-button"
-              disabled={loading || detectedTickers.length === 0}
-              onClick={() => {
-                lastManualAppliedRef.current = detectedTickers.join(",");
-                void runFetch(detectedTickers, "Manual");
-              }}
-            >
-              {loading ? "Loading..." : "Fetch SCTR"}
-            </button>
+            <div className="stock-details-manual-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={loading || records.length === 0 || detectedTickers.length === 0}
+                onClick={handleManualAppend}
+              >
+                Append
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={loading || detectedTickers.length === 0}
+                onClick={handleManualFetch}
+              >
+                {loading ? "Loading..." : "Fetch SCTR"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -474,7 +627,7 @@ export default function StockDetailsPanel() {
             <table className="ledger-table stock-details-table">
               <thead>
                 <tr>
-                  {COLUMNS.map((column) => (
+                  {visibleColumns.map((column) => (
                     <th key={column.key}>
                       <button type="button" className="stock-details-sort" onClick={() => toggleSort(column.key)}>
                         <span>{column.label}</span>
@@ -487,7 +640,7 @@ export default function StockDetailsPanel() {
               <tbody>
                 {sortedRecords.map((record) => (
                   <tr key={record.symbol}>
-                    {COLUMNS.map((column) => {
+                    {visibleColumns.map((column) => {
                       if (column.key === "industryPercentAboveMA50") {
                         const prefix = record.industryAboveMA50 == null ? "" : record.industryAboveMA50 ? "↑ " : "↓ ";
                         const content = record.industryPercentAboveMA50 == null
@@ -497,7 +650,7 @@ export default function StockDetailsPanel() {
                       }
                       const value = record[column.key];
                       return (
-                        <td key={column.key} className={column.numeric ? "numeric-cell" : ""}>
+                        <td key={column.key} className={column.numeric ? "numeric-cell" : column.center ? "center-cell" : ""}>
                           {formatValue(value, {
                             integer: column.integer,
                             precision: column.key === "close" || column.key === "marketCap" ? 2 : 1,

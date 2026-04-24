@@ -435,7 +435,7 @@ func (h *apiHandler) stockDetailsFetchSCTR(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	result, err := h.details.FetchSCTRForTickers(r.Context(), payload.Tickers, payload.IndustrySource)
+	result, err := h.details.FetchSCTRForTickers(r.Context(), payload.Tickers, payload.IndustrySource, payload.IncludeIndustryStrength, payload.ForceRefresh)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"stock-sim/internal/bootstrap"
@@ -81,6 +84,39 @@ func (a *App) GetAPIBaseURL() string {
 // Version returns the application version string.
 func (a *App) Version() string {
 	return version.Version
+}
+
+// SaveCSV opens a native Save dialog and writes CSV content to the selected path.
+func (a *App) SaveCSV(defaultFilename, content string) (string, error) {
+	if a.ctx == nil {
+		return "", errors.New("app not ready")
+	}
+	defaultFilename = strings.TrimSpace(defaultFilename)
+	if defaultFilename == "" {
+		defaultFilename = "stock-details.csv"
+	}
+
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export CSV",
+		DefaultFilename: defaultFilename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "CSV files (*.csv)", Pattern: "*.csv"},
+		},
+		CanCreateDirectories: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
+	if filepath.Ext(path) == "" {
+		path += ".csv"
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // CheckForUpdates compares the running version to the latest GitHub release (optional repo via env).

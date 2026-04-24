@@ -14,6 +14,10 @@ export function GetAPIBaseURL() {
   return window['go']['main']['App']['GetAPIBaseURL']();
 }
 
+export function SaveCSV(arg1, arg2) {
+  return window['go']['main']['App']['SaveCSV'](arg1, arg2);
+}
+
 export function Version() {
   return window['go']['main']['App']['Version']();
 }

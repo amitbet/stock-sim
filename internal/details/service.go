@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"math"
@@ -24,7 +25,7 @@ import (
 
 const (
 	detailsRecordCacheTTL      = 6 * time.Hour
-	sctrSnapshotCacheTTL       = 6 * time.Hour
+	sctrSnapshotCacheTTL       = 12 * time.Hour
 	classificationCacheTTL     = 180 * 24 * time.Hour
 	industryMA50CacheTTL       = 24 * time.Hour
 	historicalPricesCacheTTL   = 24 * time.Hour
@@ -95,15 +96,18 @@ type industryMA50CacheEntry struct {
 }
 
 type ParseCSVResult struct {
-	Columns           []string `json:"columns"`
-	TickerColumnIndex int      `json:"tickerColumnIndex"`
-	TickerColumnName  string   `json:"tickerColumnName"`
-	Tickers           []string `json:"tickers"`
+	Columns           []string          `json:"columns"`
+	TickerColumnIndex int               `json:"tickerColumnIndex"`
+	TickerColumnName  string            `json:"tickerColumnName"`
+	Tickers           []string          `json:"tickers"`
+	CriteriaByTicker  map[string]string `json:"criteriaByTicker,omitempty"`
 }
 
 type FetchRequest struct {
-	Tickers        []string `json:"tickers"`
-	IndustrySource string   `json:"industrySource"`
+	Tickers                 []string `json:"tickers"`
+	IndustrySource          string   `json:"industrySource"`
+	IncludeIndustryStrength bool     `json:"includeIndustryStrength"`
+	ForceRefresh            bool     `json:"forceRefresh"`
 }
 
 type IndustryMA50Request struct {
@@ -125,6 +129,7 @@ type IndustryMA50Response struct {
 type Record struct {
 	Date                   string   `json:"date"`
 	Symbol                 string   `json:"symbol"`
+	Type                   string   `json:"type,omitempty"`
 	Name                   string   `json:"name"`
 	SCTR                   *float64 `json:"SCTR"`
 	Delta                  *float64 `json:"delta"`
@@ -193,14 +198,16 @@ type sctrRawItem struct {
 }
 
 type sctrViewConfig struct {
-	view string
-	url  string
+	view       string
+	recordType string
+	url        string
 }
 
 var sctrViews = []sctrViewConfig{
-	{view: "S", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=S&timeframe=I"},
-	{view: "M", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=M&timeframe=I"},
-	{view: "L", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=L&timeframe=I"},
+	{view: "S", recordType: "Small", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=S&timeframe=I"},
+	{view: "M", recordType: "Med", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=M&timeframe=I"},
+	{view: "L", recordType: "Large", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=L&timeframe=I"},
+	{view: "E", recordType: "ETF", url: "https://stockcharts.com/j-sum/sum?cmd=sctr&view=E"},
 }
 
 var (
@@ -216,7 +223,11 @@ var (
 		regexp.MustCompile(`(?i)snapshot-td2[^>]*>Industry</td>\s*<td[^>]*>([^<]+)</td>`),
 		regexp.MustCompile(`(?i)Industry[^<]*</td>\s*<td[^>]*class="snapshot-td2"[^>]*>([^<]+)</td>`),
 	}
-	finvizTooltipPattern = regexp.MustCompile(`(?i)<b>[^<]+</b>([^<•]+)<span[^>]*>•</span>`)
+	finvizTooltipPattern            = regexp.MustCompile(`(?i)<b>[^<]+</b>([^<•]+)<span[^>]*>•</span>`)
+	finvizQuoteSectorPattern        = regexp.MustCompile(`(?is)<a[^>]+href="[^"]*f=sec_[^"]*"[^>]*>(.*?)</a>`)
+	finvizQuoteIndustryTitlePattern = regexp.MustCompile(`(?is)<a[^>]+href="[^"]*f=ind_[^"]*"[^>]*title="([^"]+)"[^>]*>`)
+	finvizQuoteIndustryPattern      = regexp.MustCompile(`(?is)<a[^>]+href="[^"]*f=ind_[^"]*"[^>]*>(.*?)</a>`)
+	htmlTagPattern                  = regexp.MustCompile(`(?is)<[^>]+>`)
 )
 
 func NewService(yahooStore *data.Store) *Service {
@@ -262,16 +273,18 @@ func (s *Service) ParseCSV(text string) (*ParseCSVResult, error) {
 	columnIndex := detectTickerColumnIndex(records, columns)
 	columnName := columns[columnIndex]
 	tickers := extractTickersFromRecords(records, columnName)
+	criteriaColumnName := detectCSVColumn(columns, []string{"criteria"}, []string{"criteria"})
 
 	return &ParseCSVResult{
 		Columns:           columns,
 		TickerColumnIndex: columnIndex,
 		TickerColumnName:  columnName,
 		Tickers:           tickers,
+		CriteriaByTicker:  extractStringByTickerFromRecords(records, columnName, criteriaColumnName),
 	}, nil
 }
 
-func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, industrySource string) (*FetchResponse, error) {
+func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, industrySource string, includeIndustryStrength bool, forceRefresh bool) (*FetchResponse, error) {
 	normalized := normalizeTickers(tickers)
 	normalizedSource := strings.ToLower(strings.TrimSpace(industrySource))
 	if normalizedSource == "" {
@@ -280,13 +293,19 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 	if len(normalized) == 0 {
 		return &FetchResponse{
 			Records:        []Record{},
-			Stats:          StatsResult{Industries: map[string]AggregateStat{}, Sectors: map[string]AggregateStat{}, IndustryMA50: map[string]IndustryMA50{}},
+			Stats:          emptyStatsResult(),
 			MissingTickers: []string{},
 		}, nil
 	}
 
-	fullyCachedRecords, allCached := s.cachedDetailRecords(normalized, normalizedSource)
-	if allCached {
+	var (
+		fullyCachedRecords []Record
+		allCached          bool
+	)
+	if !forceRefresh {
+		fullyCachedRecords, allCached = s.cachedDetailRecords(normalized, normalizedSource)
+	}
+	if allCached && !includeIndustryStrength {
 		sort.SliceStable(fullyCachedRecords, func(i, j int) bool {
 			si := recordScore(fullyCachedRecords[i].SCTR)
 			sj := recordScore(fullyCachedRecords[j].SCTR)
@@ -295,15 +314,10 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 			}
 			return si > sj
 		})
-		industryMA50 := s.cachedIndustryMA50Map(fullyCachedRecords)
 		log.Printf("stock-sim: stock details served fully from cache for %d tickers (%s)", len(fullyCachedRecords), normalizedSource)
 		return &FetchResponse{
-			Records: fullyCachedRecords,
-			Stats: StatsResult{
-				Industries:   map[string]AggregateStat{},
-				Sectors:      map[string]AggregateStat{},
-				IndustryMA50: industryMA50,
-			},
+			Records:        stripIndustryStrengthFromRecords(fullyCachedRecords),
+			Stats:          emptyStatsResult(),
 			MissingTickers: []string{},
 		}, nil
 	}
@@ -318,48 +332,41 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 		recordMap[strings.ToUpper(record.Symbol)] = record
 	}
 
-	records := make([]Record, 0, len(normalized))
+	classified := make([]Record, 0, len(normalized))
 	cachedRecords := make([]Record, 0, len(normalized))
 	recordsToEnrich := make([]Record, 0, len(normalized))
 	missing := make([]string, 0)
-	for _, ticker := range normalized {
-		record, ok := recordMap[ticker]
-		if !ok {
-			missing = append(missing, ticker)
-			continue
+	if allCached {
+		classified = fullyCachedRecords
+	} else {
+		for _, ticker := range normalized {
+			record, ok := recordMap[ticker]
+			if !ok {
+				missing = append(missing, ticker)
+				continue
+			}
+			if !forceRefresh {
+				if cached, ok := s.cachedDetailRecord(ticker, normalizedSource); ok {
+					cachedRecords = append(cachedRecords, cached)
+					continue
+				}
+			}
+			recordsToEnrich = append(recordsToEnrich, record)
 		}
-		records = append(records, record)
-		if cached, ok := s.cachedDetailRecord(ticker, normalizedSource); ok {
-			cachedRecords = append(cachedRecords, cached)
-			continue
+
+		classifiedFresh := make([]Record, 0, len(recordsToEnrich))
+		if len(recordsToEnrich) > 0 {
+			classifiedFresh, err = s.enrichRecordsWithClassification(ctx, recordsToEnrich, normalizedSource)
+			if err != nil {
+				return nil, err
+			}
+			s.enrichRecordsWithEarningsDates(ctx, classifiedFresh)
+			for _, record := range classifiedFresh {
+				s.storeDetailRecordCache(record, normalizedSource)
+			}
 		}
-		recordsToEnrich = append(recordsToEnrich, record)
-	}
 
-	classifiedFresh := make([]Record, 0, len(recordsToEnrich))
-	if len(recordsToEnrich) > 0 {
-		classifiedFresh, err = s.enrichRecordsWithClassification(ctx, recordsToEnrich, normalizedSource)
-		if err != nil {
-			return nil, err
-		}
-		s.enrichRecordsWithEarningsDates(ctx, classifiedFresh)
-	}
-
-	classified := append(cachedRecords, classifiedFresh...)
-
-	stats := calculateStats(allRecords)
-	industryMap := buildIndustryLookupMap(allRecords, classified)
-	industryMA50 := s.cachedIndustryMA50Map(classified)
-
-	for idx := range classified {
-		rsIndustry, rsSector := calculateRelativeStrength(classified[idx], stats, industryMap)
-		classified[idx].IndustryRS = rsIndustry
-		classified[idx].SectorRS = rsSector
-		if ma50, ok := industryMA50[strings.TrimSpace(classified[idx].Industry)]; ok {
-			classified[idx].IndustryAboveMA50 = boolPtr(ma50.AboveMA)
-			classified[idx].IndustryPercentAbove50 = floatPtr(ma50.PercentAboveMA50)
-		}
-		s.storeDetailRecordCache(classified[idx], normalizedSource)
+		classified = append(cachedRecords, classifiedFresh...)
 	}
 
 	if len(missing) > 0 {
@@ -368,6 +375,26 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 			classified = append(classified, record)
 			s.storeDetailRecordCache(record, normalizedSource)
 		}
+	}
+
+	stats := emptyStatsResult()
+	if includeIndustryStrength {
+		classified = stripIndustryStrengthFromRecords(classified)
+		stats = calculateStats(allRecords)
+		industryMap := buildIndustryLookupMap(allRecords, classified)
+		industryMA50 := s.cachedIndustryMA50Map(classified)
+		for idx := range classified {
+			rsIndustry, rsSector := calculateRelativeStrength(classified[idx], stats, industryMap)
+			classified[idx].IndustryRS = rsIndustry
+			classified[idx].SectorRS = rsSector
+			if ma50, ok := industryMA50[strings.TrimSpace(classified[idx].Industry)]; ok {
+				classified[idx].IndustryAboveMA50 = boolPtr(ma50.AboveMA)
+				classified[idx].IndustryPercentAbove50 = floatPtr(ma50.PercentAboveMA50)
+			}
+		}
+		stats.IndustryMA50 = industryMA50
+	} else {
+		classified = stripIndustryStrengthFromRecords(classified)
 	}
 
 	sort.SliceStable(classified, func(i, j int) bool {
@@ -380,12 +407,8 @@ func (s *Service) FetchSCTRForTickers(ctx context.Context, tickers []string, ind
 	})
 
 	return &FetchResponse{
-		Records: classified,
-		Stats: StatsResult{
-			Industries:   stats.Industries,
-			Sectors:      stats.Sectors,
-			IndustryMA50: industryMA50,
-		},
+		Records:        classified,
+		Stats:          stats,
 		MissingTickers: missing,
 	}, nil
 }
@@ -402,6 +425,26 @@ func (s *Service) FetchIndustryMA50(ctx context.Context, industry string, record
 		return s.calculateIndustryMA50(ctx, record, records)
 	}
 	return nil, nil
+}
+
+func emptyStatsResult() StatsResult {
+	return StatsResult{
+		Industries:   map[string]AggregateStat{},
+		Sectors:      map[string]AggregateStat{},
+		IndustryMA50: map[string]IndustryMA50{},
+	}
+}
+
+func stripIndustryStrengthFromRecords(records []Record) []Record {
+	out := make([]Record, len(records))
+	for idx, record := range records {
+		record.IndustryRS = nil
+		record.SectorRS = nil
+		record.IndustryAboveMA50 = nil
+		record.IndustryPercentAbove50 = nil
+		out[idx] = record
+	}
+	return out
 }
 
 func (s *Service) fetchFallbackRecords(ctx context.Context, tickers []string, source string) []Record {
@@ -659,7 +702,7 @@ func (s *Service) fetchSCTRView(ctx context.Context, cfg sctrViewConfig) ([]Reco
 		return nil, fmt.Errorf("decode stockcharts sctr view %s: %w", cfg.view, err)
 	}
 
-	return normalizeSCTRRecords(raw), nil
+	return normalizeSCTRRecords(raw, cfg.recordType), nil
 }
 
 func dedupeSCTRRecords(records []Record) []Record {
@@ -712,10 +755,13 @@ func mergeSCTRRecord(current Record, candidate Record) Record {
 	if current.Sector == "" && candidate.Sector != "" {
 		current.Sector = candidate.Sector
 	}
+	if current.Type == "" || candidate.Type == "ETF" {
+		current.Type = candidate.Type
+	}
 	return current
 }
 
-func normalizeSCTRRecords(raw []sctrRawItem) []Record {
+func normalizeSCTRRecords(raw []sctrRawItem, recordType string) []Record {
 	records := make([]Record, 0, len(raw))
 	asOfDate := ""
 	for _, item := range raw {
@@ -734,6 +780,7 @@ func normalizeSCTRRecords(raw []sctrRawItem) []Record {
 		records = append(records, Record{
 			Date:      dateValue,
 			Symbol:    symbol,
+			Type:      recordType,
 			Name:      toString(item.Name),
 			SCTR:      toFloatPtr(item.SCTR),
 			Delta:     toFloatPtr(item.Delta),
@@ -768,10 +815,16 @@ func (s *Service) enrichRecordsWithClassification(ctx context.Context, records [
 			classification *Classification
 			err            error
 		)
+		out[idx].Industry = ""
+		out[idx].Sector = ""
 		switch normalizedSource {
 		case "yahoo":
+			out[idx].IndustrySource = "Yahoo"
+			out[idx].SectorSource = "Yahoo"
 			classification, err = s.fetchYahooClassification(ctx, out[idx].Symbol)
 		default:
+			out[idx].IndustrySource = "Finviz"
+			out[idx].SectorSource = "Finviz"
 			classification, err = s.fetchFinvizClassification(ctx, out[idx].Symbol)
 		}
 		if err != nil {
@@ -787,12 +840,6 @@ func (s *Service) enrichRecordsWithClassification(ctx context.Context, records [
 				out[idx].SectorSource = classification.Source
 			}
 		}
-		if out[idx].IndustrySource == "" {
-			out[idx].IndustrySource = "StockCharts"
-		}
-		if out[idx].SectorSource == "" {
-			out[idx].SectorSource = "StockCharts"
-		}
 		if idx < len(out)-1 && normalizedSource == "finviz" {
 			time.Sleep(defaultClassificationDelay)
 		}
@@ -803,12 +850,19 @@ func (s *Service) enrichRecordsWithClassification(ctx context.Context, records [
 
 func (s *Service) fetchYahooClassification(ctx context.Context, ticker string) (*Classification, error) {
 	return s.fetchClassificationWithCache("yahoo:"+ticker, classificationCacheTTL, s.yahooCache, func() (*Classification, error) {
-		endpoint := fmt.Sprintf("https://query1.finance.yahoo.com/v10/finance/quoteSummary/%s?modules=assetProfile", url.PathEscape(ticker))
+		normalizedTicker := strings.ToUpper(strings.TrimSpace(ticker))
+		endpoint := "https://query1.finance.yahoo.com/v1/finance/search"
+		params := url.Values{}
+		params.Set("q", normalizedTicker)
+		params.Set("quotesCount", "6")
+		params.Set("newsCount", "0")
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; stock-sim/1.0)")
+		req.URL.RawQuery = params.Encode()
+		req.Header.Set("User-Agent", "Mozilla/5.0")
+		req.Header.Set("Accept", "application/json")
 		resp, err := s.httpClient.Do(req)
 		if err != nil {
 			return nil, err
@@ -821,30 +875,39 @@ func (s *Service) fetchYahooClassification(ctx context.Context, ticker string) (
 			return nil, fmt.Errorf("yahoo classification: status %d", resp.StatusCode)
 		}
 		var payload struct {
-			QuoteSummary struct {
-				Result []struct {
-					AssetProfile struct {
-						Industry string `json:"industry"`
-						Sector   string `json:"sector"`
-					} `json:"assetProfile"`
-				} `json:"result"`
-			} `json:"quoteSummary"`
+			Quotes []struct {
+				Symbol       string `json:"symbol"`
+				Industry     string `json:"industry"`
+				IndustryDisp string `json:"industryDisp"`
+				Sector       string `json:"sector"`
+				SectorDisp   string `json:"sectorDisp"`
+			} `json:"quotes"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 			return nil, err
 		}
-		if len(payload.QuoteSummary.Result) == 0 {
-			return nil, nil
+		for _, quote := range payload.Quotes {
+			if strings.ToUpper(strings.TrimSpace(quote.Symbol)) != normalizedTicker {
+				continue
+			}
+			industry := strings.TrimSpace(quote.IndustryDisp)
+			if industry == "" {
+				industry = strings.TrimSpace(quote.Industry)
+			}
+			sector := strings.TrimSpace(quote.SectorDisp)
+			if sector == "" {
+				sector = strings.TrimSpace(quote.Sector)
+			}
+			if industry == "" && sector == "" {
+				return nil, nil
+			}
+			return &Classification{
+				Industry: industry,
+				Sector:   sector,
+				Source:   "Yahoo",
+			}, nil
 		}
-		profile := payload.QuoteSummary.Result[0].AssetProfile
-		if strings.TrimSpace(profile.Industry) == "" && strings.TrimSpace(profile.Sector) == "" {
-			return nil, nil
-		}
-		return &Classification{
-			Industry: strings.TrimSpace(profile.Industry),
-			Sector:   strings.TrimSpace(profile.Sector),
-			Source:   "Yahoo",
-		}, nil
+		return nil, nil
 	})
 }
 
@@ -872,8 +935,13 @@ func (s *Service) fetchFinvizClassification(ctx context.Context, ticker string) 
 			return nil, err
 		}
 		html := string(body)
-		sector := findFirstMatch(finvizSectorPatterns, html)
-		industry := findFirstMatch(finvizIndustryPatterns, html)
+		sector, industry := parseFinvizQuoteLinksClassification(html)
+		if sector == "" {
+			sector = findFirstMatch(finvizSectorPatterns, html)
+		}
+		if industry == "" {
+			industry = findFirstMatch(finvizIndustryPatterns, html)
+		}
 		if industry == "" {
 			if matches := finvizTooltipPattern.FindStringSubmatch(html); len(matches) > 1 {
 				industry = strings.TrimSpace(matches[1])
@@ -1023,6 +1091,9 @@ func (s *Service) cachedDetailRecord(symbol, source string) (Record, bool) {
 	if !ok || !now.Before(entry.expiresAt) {
 		return Record{}, false
 	}
+	if cachedExternalClassificationIsBlank(entry.value, source) {
+		return Record{}, false
+	}
 	return cloneRecord(entry.value), true
 }
 
@@ -1042,13 +1113,6 @@ func (s *Service) storeDetailRecordCache(record Record, source string) {
 	cacheKey := detailRecordCacheKey(record.Symbol, source)
 	now := time.Now()
 
-	s.mu.RLock()
-	existing, ok := s.detailRecordCache[cacheKey]
-	s.mu.RUnlock()
-	if ok && now.Before(existing.expiresAt) {
-		return
-	}
-
 	s.mu.Lock()
 	s.detailRecordCache[cacheKey] = detailRecordCacheEntry{
 		value:     cloneRecord(record),
@@ -1060,6 +1124,14 @@ func (s *Service) storeDetailRecordCache(record Record, source string) {
 
 func detailRecordCacheKey(symbol, source string) string {
 	return strings.ToUpper(strings.TrimSpace(symbol)) + "|" + strings.ToLower(strings.TrimSpace(source))
+}
+
+func cachedExternalClassificationIsBlank(record Record, source string) bool {
+	normalizedSource := strings.ToLower(strings.TrimSpace(source))
+	if normalizedSource != "finviz" && normalizedSource != "yahoo" {
+		return false
+	}
+	return strings.TrimSpace(record.Industry) == "" && strings.TrimSpace(record.Sector) == ""
 }
 
 func cloneRecords(records []Record) []Record {
@@ -1113,7 +1185,7 @@ func (s *Service) fetchClassificationWithCache(key string, ttl time.Duration, st
 	s.mu.RLock()
 	entry, ok := store[key]
 	s.mu.RUnlock()
-	if ok && now.Before(entry.expiresAt) {
+	if ok && now.Before(entry.expiresAt) && entry.value != nil {
 		return entry.value, nil
 	}
 
@@ -1122,13 +1194,15 @@ func (s *Service) fetchClassificationWithCache(key string, ttl time.Duration, st
 		return nil, err
 	}
 
-	s.mu.Lock()
-	store[key] = classificationCacheEntry{
-		value:     value,
-		expiresAt: now.Add(ttl),
+	if value != nil {
+		s.mu.Lock()
+		store[key] = classificationCacheEntry{
+			value:     value,
+			expiresAt: now.Add(ttl),
+		}
+		s.mu.Unlock()
+		s.persistCaches()
 	}
-	s.mu.Unlock()
-	s.persistCaches()
 	return value, nil
 }
 
@@ -1588,6 +1662,40 @@ func detectTickerColumnIndex(records []map[string]string, columns []string) int 
 	return bestIndex
 }
 
+func detectCSVColumn(columns []string, exactAliases []string, containsAliases []string) string {
+	exact := make(map[string]struct{}, len(exactAliases))
+	for _, alias := range exactAliases {
+		normalized := normalizeCSVColumnName(alias)
+		if normalized != "" {
+			exact[normalized] = struct{}{}
+		}
+	}
+	for _, column := range columns {
+		if _, ok := exact[normalizeCSVColumnName(column)]; ok {
+			return column
+		}
+	}
+	for _, column := range columns {
+		normalized := normalizeCSVColumnName(column)
+		for _, alias := range containsAliases {
+			if needle := normalizeCSVColumnName(alias); needle != "" && strings.Contains(normalized, needle) {
+				return column
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeCSVColumnName(value string) string {
+	var builder strings.Builder
+	for _, char := range strings.ToLower(strings.TrimSpace(value)) {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			builder.WriteRune(char)
+		}
+	}
+	return builder.String()
+}
+
 func extractTickersFromRecords(records []map[string]string, column string) []string {
 	seen := make(map[string]struct{})
 	out := make([]string, 0)
@@ -1601,6 +1709,30 @@ func extractTickersFromRecords(records []map[string]string, column string) []str
 		}
 		seen[ticker] = struct{}{}
 		out = append(out, ticker)
+	}
+	return out
+}
+
+func extractStringByTickerFromRecords(records []map[string]string, tickerColumn, valueColumn string) map[string]string {
+	if strings.TrimSpace(valueColumn) == "" {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, record := range records {
+		ticker := normalizeTickerCandidate(record[tickerColumn])
+		if ticker == "" {
+			continue
+		}
+		value := strings.TrimSpace(record[valueColumn])
+		if value == "" {
+			continue
+		}
+		if _, exists := out[ticker]; !exists {
+			out[ticker] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
@@ -1694,6 +1826,8 @@ func toInt64Ptr(value any) *int64 {
 }
 
 func cleanHTMLValue(value string) string {
+	value = htmlTagPattern.ReplaceAllString(value, " ")
+	value = html.UnescapeString(value)
 	value = strings.ReplaceAll(value, "&nbsp;", " ")
 	value = strings.TrimSpace(value)
 	value = strings.Join(strings.Fields(value), " ")
@@ -1701,6 +1835,25 @@ func cleanHTMLValue(value string) string {
 		return ""
 	}
 	return value
+}
+
+func parseFinvizQuoteLinksClassification(text string) (string, string) {
+	sector := ""
+	if matches := finvizQuoteSectorPattern.FindStringSubmatch(text); len(matches) > 1 {
+		sector = cleanHTMLValue(matches[1])
+	}
+
+	industry := ""
+	if matches := finvizQuoteIndustryTitlePattern.FindStringSubmatch(text); len(matches) > 1 {
+		industry = cleanHTMLValue(matches[1])
+	}
+	if industry == "" {
+		if matches := finvizQuoteIndustryPattern.FindStringSubmatch(text); len(matches) > 1 {
+			industry = cleanHTMLValue(matches[1])
+		}
+	}
+
+	return sector, industry
 }
 
 func findFirstMatch(patterns []*regexp.Regexp, text string) string {
