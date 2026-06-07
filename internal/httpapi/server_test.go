@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"stock-sim/internal/httpapi"
+	"github.com/amitbet/stock-sim/internal/httpapi"
 
 	_ "modernc.org/sqlite"
 )

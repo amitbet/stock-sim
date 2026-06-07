@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"stock-sim/internal/data"
-	"stock-sim/internal/plan"
-	"stock-sim/internal/sim"
+	"github.com/amitbet/stock-sim/internal/data"
+	"github.com/amitbet/stock-sim/internal/plan"
+	"github.com/amitbet/stock-sim/internal/sim"
 )
 
 func TestRunExecutesFirstEntryAndLadder(t *testing.T) {

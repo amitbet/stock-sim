@@ -1,3 +1,5 @@
+//go:build desktop
+
 package main
 
 import (
@@ -10,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"stock-sim/internal/bootstrap"
-	"stock-sim/internal/httpapi"
-	"stock-sim/internal/updater"
-	"stock-sim/internal/version"
+	"github.com/amitbet/stock-sim/internal/bootstrap"
+	"github.com/amitbet/stock-sim/internal/httpapi"
+	"github.com/amitbet/stock-sim/internal/updater"
+	"github.com/amitbet/stock-sim/internal/version"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )

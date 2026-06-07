@@ -1,0 +1,1 @@
+function t(){return window.go.main.App.ApplyUpdateAndRestart()}function o(){return window.go.main.App.CheckForUpdates()}function p(){return window.go.main.App.GetAPIBaseURL()}function i(n,e){return window.go.main.App.SaveCSV(n,e)}function r(){return window.go.main.App.Version()}export{t as ApplyUpdateAndRestart,o as CheckForUpdates,p as GetAPIBaseURL,i as SaveCSV,r as Version};

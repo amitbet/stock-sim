@@ -189,6 +189,7 @@ function buildProgressStages(sourceLabel, industrySource, tickerCount, includeIn
     `${sourceLabel}: fetching SCTR snapshot for ${scope}...`,
     `${sourceLabel}: matching uploaded tickers against the latest SCTR rankings...`,
     `${sourceLabel}: enriching sector and industry data from ${sourceName}...`,
+    `${sourceLabel}: scanning for earning dates...`,
     `${sourceLabel}: preparing table data...`
   ];
   if (includeIndustryStrength) {
@@ -420,6 +421,13 @@ export default function StockDetailsPanel() {
       const tickers = Array.isArray(payload.tickers) ? payload.tickers : [];
       const extrasByTicker = buildCsvExtrasByTicker(payload);
       setMessage(`Parsed ${tickers.length} tickers from ${payload.tickerColumnName || `column ${payload.tickerColumnIndex}`}.`);
+      if (tickers.length === 0) {
+        stopProgressUpdates();
+        setLoading(false);
+        setRecords([]);
+        setMissingTickers([]);
+        return;
+      }
       await runFetch(tickers, "CSV", industrySource, { extrasByTicker });
     } catch (error) {
       setLoading(false);

@@ -5,8 +5,8 @@ import (
 	"hash/fnv"
 	"time"
 
-	"stock-sim/internal/data"
-	"stock-sim/internal/plan"
+	"github.com/amitbet/stock-sim/internal/data"
+	"github.com/amitbet/stock-sim/internal/plan"
 )
 
 func Run(bars []data.Bar, referenceSellDate time.Time, strategy plan.StrategyPlan, mode ExecutionPriceMode, referencePriceMode ReferencePriceMode, referencePriceOverride *float64) (Result, error) {

@@ -9,6 +9,10 @@ ui/node_modules/
 dist/
 ui/dist/
 internal/httpapi/dist/
+!internal/httpapi/dist/
+!internal/httpapi/dist/index.html
+!internal/httpapi/dist/assets/
+!internal/httpapi/dist/assets/*
 coverage/
 ui/coverage/
 __debug_bin*
@@ -18,3 +22,4 @@ stock-sim
 
 # Wails
 build/bin/
+.vercel

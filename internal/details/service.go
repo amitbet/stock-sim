@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"stock-sim/internal/data"
+	"github.com/amitbet/stock-sim/internal/data"
 )
 
 const (
@@ -31,6 +31,7 @@ const (
 	historicalPricesCacheTTL   = 24 * time.Hour
 	earningsDateCacheTTL       = 7 * 24 * time.Hour
 	defaultHistoricalLookback  = 180
+	defaultEarningsLookahead   = 30
 	maxIndustryStocksForMA50   = 20
 	defaultRequestTimeout      = 20 * time.Second
 	defaultClassificationDelay = 150 * time.Millisecond
@@ -503,9 +504,7 @@ func (s *Service) fetchFallbackRecords(ctx context.Context, tickers []string, so
 				record = enriched[0]
 			}
 
-			enrichedRecord := []Record{record}
-			s.enrichRecordsWithEarningsDates(ctx, enrichedRecord)
-			results <- result{record: enrichedRecord[0]}
+			results <- result{record: record}
 		}(symbol)
 	}
 
@@ -984,13 +983,37 @@ func (s *Service) fetchUpcomingEarningsDates(ctx context.Context, symbols []stri
 		return results, nil
 	}
 
-	const lookaheadDays = 120
-	for offset := 0; offset < lookaheadDays && len(results) < len(targets); offset++ {
-		dateValue := now.AddDate(0, 0, offset).Format("2006-01-02")
-		calendar, err := s.fetchNasdaqEarningsCalendar(ctx, dateValue)
-		if err != nil {
-			continue
-		}
+	dateValues := make([]string, 0, defaultEarningsLookahead)
+	for offset := 0; offset < defaultEarningsLookahead; offset++ {
+		dateValues = append(dateValues, now.AddDate(0, 0, offset).Format("2006-01-02"))
+	}
+
+	const maxConcurrentEarningsDays = 6
+	sem := make(chan struct{}, maxConcurrentEarningsDays)
+	calendars := make(chan map[string]string, len(dateValues))
+	var wg sync.WaitGroup
+	for _, dateValue := range dateValues {
+		wg.Add(1)
+		go func(dateValue string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			calendar, err := s.fetchNasdaqEarningsCalendar(ctx, dateValue)
+			if err != nil {
+				return
+			}
+			calendars <- calendar
+		}(dateValue)
+	}
+	wg.Wait()
+	close(calendars)
+
+	for calendar := range calendars {
 		for symbol := range targets {
 			if _, ok := results[symbol]; ok {
 				continue
@@ -1004,9 +1027,11 @@ func (s *Service) fetchUpcomingEarningsDates(ctx context.Context, symbols []stri
 					expiresAt: now.Add(earningsDateCacheTTL),
 				}
 				s.mu.Unlock()
-				s.persistCaches()
 			}
 		}
+	}
+	if len(results) > 0 {
+		s.persistCaches()
 	}
 
 	s.mu.Lock()

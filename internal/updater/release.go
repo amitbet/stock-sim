@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"stock-sim/internal/version"
+	"github.com/amitbet/stock-sim/internal/version"
 )
 
 // githubAPIRoot is the GitHub API origin (scheme + host, no trailing slash).
@@ -40,7 +40,7 @@ func repoFromEnv() (string, error) {
 		repo = strings.TrimSpace(version.UpdateRepo)
 	}
 	if repo == "" {
-		return "", fmt.Errorf("set STOCK_SIM_UPDATE_REPO=owner/repo (or build with -X stock-sim/internal/version.UpdateRepo=...) for updates")
+		return "", fmt.Errorf("set STOCK_SIM_UPDATE_REPO=owner/repo (or build with -X github.com/amitbet/stock-sim/internal/version.UpdateRepo=...) for updates")
 	}
 	return repo, nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -15,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"stock-sim/internal/data"
-	"stock-sim/internal/details"
-	"stock-sim/internal/plan"
-	"stock-sim/internal/sim"
+	"github.com/amitbet/stock-sim/internal/data"
+	"github.com/amitbet/stock-sim/internal/details"
+	"github.com/amitbet/stock-sim/internal/plan"
+	"github.com/amitbet/stock-sim/internal/sim"
 )
 
 type Config struct {
@@ -375,6 +376,7 @@ func (h *apiHandler) runBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *apiHandler) stockDetailsParseCSV(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -417,13 +419,23 @@ func (h *apiHandler) stockDetailsParseCSV(w http.ResponseWriter, r *http.Request
 
 	result, err := h.details.ParseCSV(text)
 	if err != nil {
+		log.Printf("stock-sim: stock-details parse-csv failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	log.Printf(
+		"stock-sim: stock-details parse-csv ok tickers=%d columns=%d tickerColumn=%q bytes=%d duration=%s",
+		len(result.Tickers),
+		len(result.Columns),
+		result.TickerColumnName,
+		len(text),
+		time.Since(start).Round(time.Millisecond),
+	)
 	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *apiHandler) stockDetailsFetchSCTR(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -431,15 +443,31 @@ func (h *apiHandler) stockDetailsFetchSCTR(w http.ResponseWriter, r *http.Reques
 
 	payload, err := decodeRequestBody[details.FetchRequest](r)
 	if err != nil {
+		log.Printf("stock-sim: stock-details fetch-sctr decode failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	log.Printf(
+		"stock-sim: stock-details fetch-sctr start tickers=%d industrySource=%q includeIndustryStrength=%t forceRefresh=%t",
+		len(payload.Tickers),
+		payload.IndustrySource,
+		payload.IncludeIndustryStrength,
+		payload.ForceRefresh,
+	)
 
 	result, err := h.details.FetchSCTRForTickers(r.Context(), payload.Tickers, payload.IndustrySource, payload.IncludeIndustryStrength, payload.ForceRefresh)
 	if err != nil {
+		log.Printf("stock-sim: stock-details fetch-sctr failed tickers=%d duration=%s: %v", len(payload.Tickers), time.Since(start).Round(time.Millisecond), err)
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	log.Printf(
+		"stock-sim: stock-details fetch-sctr ok requested=%d records=%d missing=%d duration=%s",
+		len(payload.Tickers),
+		len(result.Records),
+		len(result.MissingTickers),
+		time.Since(start).Round(time.Millisecond),
+	)
 	writeJSON(w, http.StatusOK, result)
 }
 

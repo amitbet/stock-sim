@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"stock-sim/internal/plan"
+	"github.com/amitbet/stock-sim/internal/plan"
 )
 
 func TestValidateDefaultPlan(t *testing.T) {

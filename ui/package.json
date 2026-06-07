@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:vercel": "VITE_OUT_DIR=dist vite build",
     "test": "vitest run"
   },
   "dependencies": {

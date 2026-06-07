@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"stock-sim/internal/bootstrap"
-	"stock-sim/internal/httpapi"
+	"github.com/amitbet/stock-sim/internal/bootstrap"
+	"github.com/amitbet/stock-sim/internal/httpapi"
 )
 
 func main() {

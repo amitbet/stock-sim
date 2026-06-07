@@ -23,7 +23,7 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: "../internal/httpapi/dist",
+    outDir: process.env.VITE_OUT_DIR || "../internal/httpapi/dist",
     emptyOutDir: true
   },
   test: {

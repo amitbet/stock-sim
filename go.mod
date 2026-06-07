@@ -1,4 +1,4 @@
-module stock-sim
+module github.com/amitbet/stock-sim
 
 go 1.22.0
 

@@ -1,41 +1,33 @@
 package main
 
 import (
-	"embed"
+	"errors"
 	"log"
+	"net/http"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/amitbet/stock-sim/internal/bootstrap"
+	"github.com/amitbet/stock-sim/internal/httpapi"
 )
 
-//go:embed all:internal/httpapi/dist
-var assets embed.FS
-
 func main() {
+	data, err := bootstrap.LoadDataConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	app := NewApp()
-	err := wails.Run(&options.App{
-		Title:            "stock-sim",
-		Width:            1280,
-		Height:           800,
-		MinWidth:         900,
-		MinHeight:        600,
-		BackgroundColour: options.NewRGBA(27, 38, 54, 255),
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		Mac: &mac.Options{
-			DisableZoom: false,
-		},
-		OnStartup:  app.startup,
-		OnShutdown: app.shutdown,
-		Bind: []interface{}{
-			app,
-		},
+	addr := ":" + bootstrap.EnvOrDefault("PORT", "3000")
+	server, err := httpapi.NewServer(httpapi.Config{
+		Addr:          addr,
+		DBPath:        data.DBPath,
+		DefaultSource: data.DefaultSource,
+		UIDistPath:    "internal/httpapi/dist",
 	})
 	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("stock-sim listening on %s", addr)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
