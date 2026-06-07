@@ -170,7 +170,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           export PATH="${PATH}:$(go env GOPATH)/bin"
-          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -platform darwin/arm64
+          wails build -tags desktop -ldflags "-X github.com/amitbet/stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X github.com/amitbet/stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -platform darwin/arm64
 
       - name: Zip .app bundle
         env:
@@ -268,7 +268,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           export PATH="${PATH}:$(go env GOPATH | tr -d '\r')/bin"
-          wails build -ldflags "-X stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -platform windows/amd64
+          wails build -tags desktop -ldflags "-X github.com/amitbet/stock-sim/internal/version.Version=${{ needs.version.outputs.version }} -X github.com/amitbet/stock-sim/internal/version.UpdateRepo=${{ github.repository }}" -platform windows/amd64
 
       - name: Zip build output
         shell: pwsh

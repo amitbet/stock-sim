@@ -20,7 +20,7 @@ WIN_BIN := $(BIN_DIR)/stock-sim-windows-amd64.exe
 
 # Wails desktop (Vite 5173 + API 3002). Default `make` runs this.
 dev-wails:
-	SIM_ADDR=127.0.0.1:3002 $(WAILS) dev
+	SIM_ADDR=127.0.0.1:3002 $(WAILS) dev -tags desktop
 
 dev: dev-wails
 
@@ -44,7 +44,7 @@ build-ui: ui-install
 
 # Quick single-platform Wails build -> build/bin/ (for local iteration)
 build-desktop: build-ui
-	$(WAILS) build
+	$(WAILS) build -tags desktop
 
 win7-go:
 	@(cd /tmp && GOTOOLCHAIN=go$(WIN7_GO_VERSION)+auto $(GO) version >/dev/null)
@@ -54,7 +54,7 @@ win7-go:
 build: build-ui win7-go
 	rm -rf $(BIN_MACOS_WAILS) $(BIN_WIN_WAILS) $(BIN_WIN7)
 	mkdir -p $(BIN_DIR)
-	$(WAILS) build -platform darwin/arm64,windows/amd64
+	$(WAILS) build -tags desktop -platform darwin/arm64,windows/amd64
 	cp -R build/bin/stock-sim.app $(BIN_MACOS_WAILS)
 	cp build/bin/stock-sim-amd64.exe $(BIN_WIN_WAILS)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(WIN7_GO_BIN) build -modfile=go.win7.mod -mod=mod -o $(BIN_WIN7) ./cmd/server

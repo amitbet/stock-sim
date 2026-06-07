@@ -15,6 +15,10 @@ import (
 //go:embed all:internal/httpapi/dist
 var assets embed.FS
 
+func main() {
+	runDesktopApp()
+}
+
 func runDesktopApp() {
 	app := NewApp()
 	err := wails.Run(&options.App{
