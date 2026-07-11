@@ -289,6 +289,14 @@ export function fetchBars(source, symbol, from, to) {
   return request(`/api/bars?${params.toString()}`);
 }
 
+export function fetchIndicatorData(symbols, from, to) {
+  const normalized = Array.from(new Set((symbols || [])
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter(Boolean)));
+  const params = new URLSearchParams({ symbols: normalized.join(","), from, to });
+  return request(`/api/indicator-data?${params.toString()}`, { timeoutMs: STARTUP_REQUEST_TIMEOUT_MS });
+}
+
 export function fetchSymbolInfo(source, symbol) {
   const params = new URLSearchParams({ symbol });
   if (source) {

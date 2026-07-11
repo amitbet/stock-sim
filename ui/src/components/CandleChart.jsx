@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   CandlestickSeries,
+  HistogramSeries,
   LineSeries,
   createChart,
   createSeriesMarkers
@@ -33,12 +34,14 @@ export default function CandleChart({
   onSelectDate,
   actions,
   endDate,
+  indicatorResults,
   theme = "dark"
 }) {
   const hostRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
   const maSeriesRef = useRef([]);
+  const indicatorSeriesRef = useRef([]);
   const markersRef = useRef(null);
   const onSelectDateRef = useRef(onSelectDate);
 
@@ -116,6 +119,7 @@ export default function CandleChart({
       chartRef.current = null;
       seriesRef.current = null;
       maSeriesRef.current = [];
+      indicatorSeriesRef.current = [];
       markersRef.current = null;
     };
   }, []);
@@ -205,6 +209,63 @@ export default function CandleChart({
     markersRef.current.setMarkers(markers);
   }, [selectedDate, multiSelectedDates, multiSelectEnabled, actions, endDate]);
 
+  useEffect(() => {
+    if (!chartRef.current) return;
+    for (const item of indicatorSeriesRef.current) {
+      try {
+        chartRef.current.removeSeries(item.series);
+      } catch {
+        /* ignore stale chart series */
+      }
+    }
+    indicatorSeriesRef.current = [];
+
+    const active = (indicatorResults || []).filter((result) => !result.error && result.plots?.length > 0);
+    if (active.length === 0) {
+      if (chartRef.current.panes().length > 1) chartRef.current.removePane(1);
+      return;
+    }
+
+    let firstSeries = null;
+    for (const result of active) {
+      for (const plot of result.plots) {
+        const definition = plot.type === "histogram" ? HistogramSeries : LineSeries;
+        const series = chartRef.current.addSeries(definition, {
+          color: plot.color,
+          lineWidth: plot.lineWidth,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          crosshairMarkerVisible: plot.type !== "histogram"
+        }, 1);
+        series.setData(plot.data);
+        indicatorSeriesRef.current.push({ series });
+        if (!firstSeries) firstSeries = series;
+      }
+    }
+    const panes = chartRef.current.panes();
+    if (panes[0]) panes[0].setStretchFactor(0.72);
+    if (panes[1]) panes[1].setStretchFactor(0.28);
+
+    if (firstSeries) {
+      const created = new Set();
+      for (const result of active) {
+        for (const line of result.hlines || []) {
+          const key = `${line.price}-${line.title}`;
+          if (created.has(key)) continue;
+          created.add(key);
+          firstSeries.createPriceLine({
+            price: line.price,
+            color: line.color,
+            lineWidth: line.lineWidth,
+            lineStyle: 0,
+            axisLabelVisible: true,
+            title: line.title
+          });
+        }
+      }
+    }
+  }, [indicatorResults]);
+
   return (
     <div className="chart-shell">
       <div className="chart-legend">
@@ -212,6 +273,12 @@ export default function CandleChart({
           <div className="chart-legend-item" key={movingAverage.period}>
             <span className="chart-legend-swatch" style={{ backgroundColor: movingAverage.color }} />
             <span>{movingAverage.title}</span>
+          </div>
+        ))}
+        {(indicatorResults || []).filter((result) => !result.error).flatMap((result) => result.plots || []).map((plot) => (
+          <div className="chart-legend-item" key={plot.id}>
+            <span className="chart-legend-swatch" style={{ backgroundColor: plot.color }} />
+            <span>{plot.title}</span>
           </div>
         ))}
       </div>

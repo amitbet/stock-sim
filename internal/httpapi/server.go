@@ -85,6 +85,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("/api/symbols", api.symbols)
 	mux.HandleFunc("/api/symbol-info", api.symbolInfo)
 	mux.HandleFunc("/api/bars", api.bars)
+	mux.HandleFunc("/api/indicator-data", api.indicatorData)
 	mux.HandleFunc("/api/plans/validate", api.validatePlan)
 	mux.HandleFunc("/api/simulations/run", api.runSimulation)
 	mux.HandleFunc("/api/simulations/batch", api.runBatch)

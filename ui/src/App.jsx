@@ -4,17 +4,25 @@ import CandleChart from "./components/CandleChart.jsx";
 import Controls from "./components/Controls.jsx";
 import PlanEditor from "./components/PlanEditor.jsx";
 import ResultsPanel from "./components/ResultsPanel.jsx";
+import ScriptsPanel, { ScriptEditorModal } from "./components/ScriptsPanel.jsx";
 import StockDetailsPanel from "./components/StockDetailsPanel.jsx";
 import {
   fetchBars,
   fetchDataSources,
   fetchDefaultPlan,
+  fetchIndicatorData,
   fetchSymbolInfo,
   fetchSymbols,
   runBatchSimulation,
   runSimulation,
   validatePlan
 } from "./lib/api.js";
+import {
+  DEFAULT_INDICATOR_SCRIPTS,
+  evaluateIndicatorScript,
+  extractRequestedSymbols,
+  indicatorTitle
+} from "./lib/indicatorScripts.js";
 
 const AUTO_RUN_DEBOUNCE_MS = 350;
 
@@ -22,6 +30,7 @@ const AUTO_RUN_DEBOUNCE_MS = 350;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const THEME_STORAGE_KEY = "stock-sim-theme";
+const SCRIPTS_STORAGE_KEY = "stock-sim-indicator-scripts";
 
 /** Injected in vite.config.js from package.json (always available in dev/build). */
 const UI_PKG_VERSION = import.meta.env.VITE_UI_PKG_VERSION || "";
@@ -36,6 +45,21 @@ function readStoredTheme() {
     /* ignore */
   }
   return "dark";
+}
+
+function readStoredScripts() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SCRIPTS_STORAGE_KEY) || "null");
+    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_INDICATOR_SCRIPTS;
+    return parsed.map((script, index) => ({
+      id: script.id || `script-${index}`,
+      name: script.name || indicatorTitle(script.source || "", `Script ${index + 1}`),
+      visible: Boolean(script.visible),
+      source: script.source || ""
+    }));
+  } catch {
+    return DEFAULT_INDICATOR_SCRIPTS;
+  }
 }
 
 function formatISODate(value) {
@@ -155,6 +179,12 @@ export default function App() {
   const [holdDaysOverride, setHoldDaysOverride] = useState("");
   const [singleResult, setSingleResult] = useState(null);
   const [batchResult, setBatchResult] = useState(null);
+  const [scripts, setScripts] = useState(readStoredScripts);
+  const [scriptResults, setScriptResults] = useState({});
+  const [scriptsLoading, setScriptsLoading] = useState(false);
+  const [scriptsError, setScriptsError] = useState("");
+  const [editingScriptId, setEditingScriptId] = useState("");
+  const [scriptValidationError, setScriptValidationError] = useState("");
   const [batchOpen, setBatchOpen] = useState(false);
   const [selectedRunIndex, setSelectedRunIndex] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -168,6 +198,14 @@ export default function App() {
   /** Latest ticker; used when fetchSymbols completes async so we preserve user choice across data source changes. */
   const symbolRef = useRef(symbol);
   symbolRef.current = symbol;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCRIPTS_STORAGE_KEY, JSON.stringify(scripts));
+    } catch {
+      /* ignore unavailable storage */
+    }
+  }, [scripts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -364,6 +402,78 @@ export default function App() {
 
   const actionOverlay = useMemo(() => singleResult?.actions || [], [singleResult]);
   const endDate = singleResult?.summary?.end_date || "";
+  const visibleIndicatorResults = useMemo(
+    () => scripts.filter((script) => script.visible).map((script) => scriptResults[script.id]).filter(Boolean),
+    [scriptResults, scripts]
+  );
+  const editingScript = scripts.find((script) => script.id === editingScriptId) || null;
+
+  useEffect(() => {
+    const activeScripts = scripts.filter((script) => script.visible);
+    if (activeScripts.length === 0 || bars.length === 0) {
+      setScriptResults({});
+      setScriptsLoading(false);
+      setScriptsError("");
+      return;
+    }
+    let cancelled = false;
+    async function loadScriptData() {
+      setScriptsLoading(true);
+      setScriptsError("");
+      try {
+        const symbols = Array.from(new Set(activeScripts.flatMap((script) => extractRequestedSymbols(script.source))));
+        const data = symbols.length > 0
+          ? await fetchIndicatorData(symbols, bars[0].date.slice(0, 10), bars[bars.length - 1].date.slice(0, 10))
+          : { provider: "Local", series: {} };
+        const results = {};
+        for (const script of activeScripts) {
+          try {
+            results[script.id] = { ...evaluateIndicatorScript(script.source, data.series), provider: data.provider };
+          } catch (err) {
+            results[script.id] = { error: err?.message || String(err) };
+          }
+        }
+        if (!cancelled) setScriptResults(results);
+      } catch (err) {
+        const message = err?.message || String(err);
+        if (!cancelled) {
+          setScriptsError(message);
+          setScriptResults(Object.fromEntries(activeScripts.map((script) => [script.id, { error: message }])));
+        }
+      } finally {
+        if (!cancelled) setScriptsLoading(false);
+      }
+    }
+    void loadScriptData();
+    return () => { cancelled = true; };
+  }, [bars, scripts]);
+
+  function handleToggleScriptVisible(scriptId, visible) {
+    setScripts((current) => current.map((script) => script.id === scriptId ? { ...script, visible } : script));
+  }
+
+  async function handleTestScript(draft) {
+    setScriptValidationError("");
+    try {
+      const symbols = extractRequestedSymbols(draft.source);
+      const fallback = historyRange();
+      const data = symbols.length > 0
+        ? await fetchIndicatorData(symbols, bars[0]?.date?.slice(0, 10) || fallback.from, bars[bars.length - 1]?.date?.slice(0, 10) || fallback.to)
+        : { series: {} };
+      const result = evaluateIndicatorScript(draft.source, data.series);
+      setScriptValidationError(`OK: ${result.plots.length} plot${result.plots.length === 1 ? "" : "s"}, ${result.barsLoaded} bars.`);
+    } catch (err) {
+      setScriptValidationError(err?.message || String(err));
+    }
+  }
+
+  function handleSaveScript(draft) {
+    setScripts((current) => current.map((script) => script.id === draft.id
+      ? { ...draft, name: draft.name.trim() || indicatorTitle(draft.source, script.name) }
+      : script));
+    setEditingScriptId("");
+    setScriptValidationError("");
+  }
 
   async function handleValidate() {
     setValidating(true);
@@ -656,6 +766,7 @@ export default function App() {
               onSelectDate={handleSelectDate}
               actions={actionOverlay}
               endDate={endDate}
+              indicatorResults={visibleIndicatorResults}
               theme={theme}
             />
           </section>
@@ -690,6 +801,18 @@ export default function App() {
                 running={loading}
               />
 
+              <ScriptsPanel
+                scripts={scripts}
+                scriptResults={scriptResults}
+                loading={scriptsLoading}
+                error={scriptsError}
+                onToggleVisible={handleToggleScriptVisible}
+                onEditScript={(scriptId) => {
+                  setScriptValidationError("");
+                  setEditingScriptId(scriptId);
+                }}
+              />
+
               <PlanEditor
                 value={planText}
                 onChange={setPlanText}
@@ -720,6 +843,17 @@ export default function App() {
         selectedRunIndex={selectedRunIndex}
         onSelectRun={setSelectedRunIndex}
         onClose={() => setBatchOpen(false)}
+      />
+
+      <ScriptEditorModal
+        script={editingScript}
+        validationError={scriptValidationError}
+        onTest={handleTestScript}
+        onSave={handleSaveScript}
+        onClose={() => {
+          setEditingScriptId("");
+          setScriptValidationError("");
+        }}
       />
 
       <footer className="app-version-footer" aria-label="Application version">

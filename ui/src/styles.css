@@ -860,6 +860,111 @@ html[data-theme="light"] .symbol-option.active {
   background: rgba(2, 132, 199, 0.12);
 }
 
+.scripts-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.scripts-panel-toggle {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-weight: 700;
+}
+
+.scripts-panel-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.scripts-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+.script-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+html[data-theme="light"] .script-row,
+html[data-theme="light"] .script-editor {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.script-visible-toggle {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.script-visible-toggle span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.script-visible-toggle strong,
+.script-visible-toggle small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-visible-toggle small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.script-edit-button {
+  padding: 8px 10px;
+}
+
+.script-modal-card {
+  width: min(980px, calc(100vw - 48px));
+}
+
+.script-name-field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.script-editor {
+  width: 100%;
+  min-height: min(58vh, 560px);
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  padding: 14px;
+  font: 13px/1.5 "IBM Plex Mono", SFMono-Regular, Consolas, monospace;
+}
+
+.script-modal-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .symbol-empty {
   padding: 10px 12px;
   color: var(--muted);
