@@ -233,6 +233,7 @@ export default function CandleChart({
         const series = chartRef.current.addSeries(definition, {
           color: plot.color,
           lineWidth: plot.lineWidth,
+          priceScaleId: result.title,
           priceLineVisible: false,
           lastValueVisible: true,
           crosshairMarkerVisible: plot.type !== "histogram"

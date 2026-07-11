@@ -13,6 +13,7 @@ import (
 var stockChartsBreadthSymbols = map[string]string{
 	"USI:ADVN.NY": "$NYADV",
 	"USI:DECL.NY": "$NYDEC",
+	"USI:NYAD.NY": "$NYAD",
 }
 
 type indicatorBar struct {

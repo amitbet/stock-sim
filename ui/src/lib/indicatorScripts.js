@@ -18,16 +18,113 @@ hline(3, title="+3", color=color.white, linestyle=hline.style_solid, linewidth=1
 hline(-3, title="-3", color=color.white, linestyle=hline.style_solid, linewidth=1)
 `;
 
-export const DEFAULT_INDICATOR_SCRIPTS = [{
-  id: "breadth-adr-dar-3",
-  name: "ADR + DAR ±3",
-  visible: true,
-  source: DEFAULT_BREADTH_SCRIPT
-}];
+export const DEFAULT_NYAD_SCRIPT = `//@version=6
+indicator(title = "NYSE Advance-Decline Line (NYAD)", shorttitle = "NYAD", format = format.price, precision = 0)
+
+nyad = request.security("USI:NYAD.NY", timeframe.period, close)
+nyadLine = ta.cum(nyad)
+
+plot(nyadLine, title="NYAD", color=color.blue, linewidth=2)
+hline(0, title="Zero", color=color.gray)
+`;
+
+export const DEFAULT_RSI_SCRIPT = `//@version=6
+indicator(title = "Relative Strength Index (RSI)", shorttitle = "RSI", format = format.price, precision = 2)
+
+rsi = ta.rsi(close, 14)
+plot(rsi, title="RSI 14", color=color.purple, linewidth=2)
+hline(70, title="Overbought", color=color.red)
+hline(50, title="Midline", color=color.gray)
+hline(30, title="Oversold", color=color.green)
+`;
+
+export const DEFAULT_MACD_SCRIPT = `//@version=6
+indicator(title = "Moving Average Convergence Divergence (MACD)", shorttitle = "MACD", format = format.price, precision = 2)
+
+macdLine = ta.ema(close, 12) - ta.ema(close, 26)
+signalLine = ta.ema(macdLine, 9)
+histogram = macdLine - signalLine
+
+plot(histogram, title="MACD Histogram", style=plot.style_histogram, color=color.gray, linewidth=3)
+plot(macdLine, title="MACD", color=color.blue, linewidth=2)
+plot(signalLine, title="Signal", color=color.orange, linewidth=2)
+hline(0, title="Zero", color=color.gray)
+`;
+
+export const DEFAULT_OBV_SCRIPT = `//@version=6
+indicator(title = "On-Balance Volume (OBV)", shorttitle = "OBV", format = format.volume, precision = 0)
+
+obv = ta.obv(close, volume)
+plot(obv, title="OBV", color=color.teal, linewidth=2)
+`;
+
+export const DEFAULT_OBV_SMA14_SCRIPT = `//@version=6
+indicator(title="On Balance Volume + SMA 14", shorttitle="OBV SMA14", format=format.volume, timeframe="", timeframe_gaps=true)
+
+var cumVol = 0.
+cumVol += nz(volume)
+
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+
+src = close
+obv = ta.cum(math.sign(ta.change(src)) * volume)
+
+// OBV
+plot(obv, color=#2962FF, title="On Balance Volume")
+
+// SMA 14 על OBV
+obvSma14 = ta.sma(obv, 14)
+plot(obvSma14, color=color.yellow, title="OBV SMA 14", linewidth=1)
+`;
+
+export const DEFAULT_INDICATOR_SCRIPTS = [
+  {
+    id: "breadth-adr-dar-3",
+    name: "ADR + DAR ±3",
+    visible: true,
+    source: DEFAULT_BREADTH_SCRIPT
+  },
+  {
+    id: "nyse-advance-decline-line",
+    name: "NYSE Advance-Decline Line (NYAD)",
+    visible: false,
+    source: DEFAULT_NYAD_SCRIPT
+  },
+  {
+    id: "relative-strength-index",
+    name: "Relative Strength Index (RSI)",
+    visible: false,
+    source: DEFAULT_RSI_SCRIPT
+  },
+  {
+    id: "moving-average-convergence-divergence",
+    name: "Moving Average Convergence Divergence (MACD)",
+    visible: false,
+    source: DEFAULT_MACD_SCRIPT
+  },
+  {
+    id: "on-balance-volume",
+    name: "On-Balance Volume (OBV)",
+    visible: false,
+    source: DEFAULT_OBV_SCRIPT
+  },
+  {
+    id: "on-balance-volume-sma-14",
+    name: "On Balance Volume + SMA 14",
+    visible: false,
+    source: DEFAULT_OBV_SMA14_SCRIPT
+  }
+];
 
 const COLORS = {
   "color.green": "#22c55e",
   "color.red": "#ef4444",
+  "color.blue": "#38bdf8",
+  "color.orange": "#f59e0b",
+  "color.purple": "#a78bfa",
+  "color.teal": "#14b8a6",
+  "color.yellow": "#facc15",
   "color.gray": "#94a3b8",
   "color.white": "#f8fafc"
 };
@@ -151,9 +248,17 @@ function namedArgs(body) {
   return result;
 }
 
-function alignSeries(externalSeries) {
+function alignSeries(externalSeries, localBars) {
   const entries = Object.entries(externalSeries || {});
-  let dates = null;
+  const local = (localBars || [])
+    .map((bar) => ({
+      date: String(bar.date).slice(0, 10),
+      close: Number(bar.close),
+      volume: Number(bar.volume || 0)
+    }))
+    .filter((bar) => bar.date && Number.isFinite(bar.close))
+    .sort((left, right) => left.date.localeCompare(right.date));
+  let dates = entries.length === 0 ? local.map((bar) => bar.date) : null;
   const bySymbol = {};
   for (const [symbol, rows] of entries) {
     const normalized = rows
@@ -163,7 +268,59 @@ function alignSeries(externalSeries) {
     const available = new Set(normalized.map((row) => row.date));
     dates = dates ? dates.filter((date) => available.has(date)) : normalized.map((row) => row.date);
   }
-  return { dates: [...(dates || [])].sort(), bySymbol };
+  return { dates: [...(dates || [])].sort(), bySymbol, local };
+}
+
+function ema(series, period) {
+  const alpha = 2 / (period + 1);
+  let previous = null;
+  return series.map((row) => {
+    if (row.value == null) return { date: row.date, value: null };
+    previous = previous == null ? row.value : alpha * row.value + (1 - alpha) * previous;
+    return { date: row.date, value: previous };
+  });
+}
+
+function rsi(series, period) {
+  let averageGain = 0;
+  let averageLoss = 0;
+  return series.map((row, index) => {
+    if (index === 0 || row.value == null || series[index - 1]?.value == null) return { date: row.date, value: null };
+    const change = row.value - series[index - 1].value;
+    const gain = Math.max(change, 0);
+    const loss = Math.max(-change, 0);
+    if (index <= period) {
+      averageGain += gain / period;
+      averageLoss += loss / period;
+      if (index < period) return { date: row.date, value: null };
+    } else {
+      averageGain = ((averageGain * (period - 1)) + gain) / period;
+      averageLoss = ((averageLoss * (period - 1)) + loss) / period;
+    }
+    const value = averageGain === 0 && averageLoss === 0
+      ? 50
+      : averageLoss === 0 ? 100 : 100 - (100 / (1 + averageGain / averageLoss));
+    return { date: row.date, value };
+  });
+}
+
+function obv(close, volume) {
+  let total = 0;
+  return close.map((row, index) => {
+    if (index > 0 && row.value != null && close[index - 1]?.value != null) {
+      if (row.value > close[index - 1].value) total += volume[index]?.value || 0;
+      else if (row.value < close[index - 1].value) total -= volume[index]?.value || 0;
+    }
+    return { date: row.date, value: total };
+  });
+}
+
+function sma(series, period) {
+  return series.map((row, index) => {
+    const window = series.slice(Math.max(0, index - period + 1), index + 1).map((item) => item.value);
+    if (window.length < period || window.some((value) => value == null)) return { date: row.date, value: null };
+    return { date: row.date, value: window.reduce((sum, value) => sum + value, 0) / period };
+  });
 }
 
 function expression(value, context) {
@@ -178,6 +335,44 @@ function expression(value, context) {
   if (expr === "na") return context.dates.map((date) => ({ date, value: null }));
   if (/^-?\d+(?:\.\d+)?$/.test(expr)) return context.dates.map((date) => ({ date, value: Number(expr) }));
   if (expr.startsWith("-")) return expression(expr.slice(1), context).map((row) => ({ ...row, value: row.value == null ? null : -row.value }));
+
+  const cumulative = expr.match(/^ta\.cum\((.+)\)$/);
+  if (cumulative) {
+    let total = 0;
+    return expression(cumulative[1], context).map((row) => {
+      if (row.value != null) total += row.value;
+      return { date: row.date, value: row.value == null ? null : total };
+    });
+  }
+
+  const multiplication = splitBinary(expr, "*");
+  if (multiplication) return multiply(expression(multiplication[0], context), expression(multiplication[1], context));
+
+  const change = expr.match(/^ta\.change\((.+)\)$/);
+  if (change) {
+    const input = expression(change[1], context);
+    return input.map((row, index) => ({
+      date: row.date,
+      value: index === 0 || row.value == null || input[index - 1]?.value == null ? null : row.value - input[index - 1].value
+    }));
+  }
+
+  const sign = expr.match(/^math\.sign\((.+)\)$/);
+  if (sign) return expression(sign[1], context).map((row) => ({ ...row, value: row.value == null ? null : Math.sign(row.value) }));
+
+  const subtraction = splitBinary(expr, "-");
+  if (subtraction) return subtract(expression(subtraction[0], context), expression(subtraction[1], context));
+
+  const taCall = expr.match(/^ta\.(rsi|ema|sma|obv)\((.*)\)$/);
+  if (taCall) {
+    const args = splitTopLevel(taCall[2], ",");
+    if (taCall[1] === "obv" && args.length === 2) return obv(expression(args[0], context), expression(args[1], context));
+    const period = Number(args[1]);
+    if (!Number.isInteger(period) || period <= 0) throw new Error(`Invalid ${taCall[1]} period.`);
+    const input = expression(args[0], context);
+    if (taCall[1] === "rsi") return rsi(input, period);
+    return taCall[1] === "sma" ? sma(input, period) : ema(input, period);
+  }
 
   const ratio = expr.match(/^ratio\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*close\s*\)$/);
   if (ratio) return divide(security(ratio[1], context), security(ratio[2], context));
@@ -200,6 +395,20 @@ function divide(left, right) {
   return left.map((row, index) => ({ date: row.date, value: row.value == null || !right[index]?.value ? null : row.value / right[index].value }));
 }
 
+function subtract(left, right) {
+  return left.map((row, index) => ({
+    date: row.date,
+    value: row.value == null || right[index]?.value == null ? null : row.value - right[index].value
+  }));
+}
+
+function multiply(left, right) {
+  return left.map((row, index) => ({
+    date: row.date,
+    value: row.value == null || right[index]?.value == null ? null : row.value * right[index].value
+  }));
+}
+
 function condition(value, context) {
   const match = value.match(/^(.+?)\s*(>=|<=|>|<)\s*(.+)$/);
   if (!match) throw new Error(`Unsupported condition: ${value}`);
@@ -216,9 +425,20 @@ function condition(value, context) {
   });
 }
 
-export function evaluateIndicatorScript(source, externalSeries) {
-  const { dates, bySymbol } = alignSeries(externalSeries);
-  const context = { dates, bySymbol, variables: {} };
+export function evaluateIndicatorScript(source, externalSeries, localBars = []) {
+  const { dates, bySymbol, local } = alignSeries(externalSeries, localBars);
+  if (source.includes("No volume is provided by the data vendor.") && local.length > 0 && local.every((bar) => bar.volume === 0)) {
+    throw new Error("No volume is provided by the data vendor.");
+  }
+  const localByDate = new Map(local.map((bar) => [bar.date, bar]));
+  const context = {
+    dates,
+    bySymbol,
+    variables: {
+      close: dates.map((date) => ({ date, value: localByDate.get(date)?.close ?? null })),
+      volume: dates.map((date) => ({ date, value: localByDate.get(date)?.volume ?? null }))
+    }
+  };
   const plots = [];
   const hlines = [];
   for (const raw of source.split(/\r?\n/)) {

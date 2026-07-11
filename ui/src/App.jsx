@@ -51,12 +51,14 @@ function readStoredScripts() {
   try {
     const parsed = JSON.parse(localStorage.getItem(SCRIPTS_STORAGE_KEY) || "null");
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_INDICATOR_SCRIPTS;
-    return parsed.map((script, index) => ({
+    const stored = parsed.map((script, index) => ({
       id: script.id || `script-${index}`,
       name: script.name || indicatorTitle(script.source || "", `Script ${index + 1}`),
       visible: Boolean(script.visible),
       source: script.source || ""
     }));
+    const storedIds = new Set(stored.map((script) => script.id));
+    return [...stored, ...DEFAULT_INDICATOR_SCRIPTS.filter((script) => !storedIds.has(script.id))];
   } catch {
     return DEFAULT_INDICATOR_SCRIPTS;
   }
@@ -428,7 +430,14 @@ export default function App() {
         const results = {};
         for (const script of activeScripts) {
           try {
-            results[script.id] = { ...evaluateIndicatorScript(script.source, data.series), provider: data.provider };
+            const scriptSymbols = extractRequestedSymbols(script.source);
+            const scriptSeries = Object.fromEntries(scriptSymbols
+              .filter((requestedSymbol) => data.series[requestedSymbol])
+              .map((requestedSymbol) => [requestedSymbol, data.series[requestedSymbol]]));
+            results[script.id] = {
+              ...evaluateIndicatorScript(script.source, scriptSeries, bars),
+              provider: scriptSymbols.length > 0 ? data.provider : "Local"
+            };
           } catch (err) {
             results[script.id] = { error: err?.message || String(err) };
           }
@@ -460,7 +469,7 @@ export default function App() {
       const data = symbols.length > 0
         ? await fetchIndicatorData(symbols, bars[0]?.date?.slice(0, 10) || fallback.from, bars[bars.length - 1]?.date?.slice(0, 10) || fallback.to)
         : { series: {} };
-      const result = evaluateIndicatorScript(draft.source, data.series);
+      const result = evaluateIndicatorScript(draft.source, data.series, bars);
       setScriptValidationError(`OK: ${result.plots.length} plot${result.plots.length === 1 ? "" : "s"}, ${result.barsLoaded} bars.`);
     } catch (err) {
       setScriptValidationError(err?.message || String(err));
