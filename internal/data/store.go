@@ -25,6 +25,41 @@ const StooqDataSource = "stooq"
 const YahooDataSource = "yahoo"
 const YFinanceDataSource = "yfinance"
 
+type RateLimitError struct {
+	Provider          string
+	RetryAfterSeconds int
+}
+
+func (e *RateLimitError) Error() string {
+	if e.RetryAfterSeconds <= 0 {
+		return fmt.Sprintf("%s rate limit reached; try again in a moment", e.Provider)
+	}
+	if e.RetryAfterSeconds < 120 {
+		return fmt.Sprintf("%s rate limit reached; try again in %d seconds", e.Provider, e.RetryAfterSeconds)
+	}
+	minutes := (e.RetryAfterSeconds + 59) / 60
+	return fmt.Sprintf("%s rate limit reached; try again in %d minutes", e.Provider, minutes)
+}
+
+func newRateLimitError(provider, retryAfter string, now time.Time) *RateLimitError {
+	seconds := 0
+	if parsed, err := strconv.ParseFloat(strings.TrimSpace(retryAfter), 64); err == nil && parsed > 0 {
+		seconds = int(parsed)
+		if float64(seconds) < parsed {
+			seconds++
+		}
+	} else if retryAt, err := http.ParseTime(strings.TrimSpace(retryAfter)); err == nil {
+		seconds = int(retryAt.Sub(now).Seconds())
+		if retryAt.After(now.Add(time.Duration(seconds) * time.Second)) {
+			seconds++
+		}
+		if seconds < 1 {
+			seconds = 1
+		}
+	}
+	return &RateLimitError{Provider: provider, RetryAfterSeconds: seconds}
+}
+
 var stooqRowPattern = regexp.MustCompile(`<tr><td align=center id=t03>\d+</td><td nowrap>([^<]+)</td><td>([^<]+)</td><td>([^<]+)</td><td>([^<]+)</td><td>([^<]+)</td><td id=c[12]>[^<]+</td><td id=c[12]>[^<]+</td><td>([^<]+)</td></tr>`)
 
 type Bar struct {
@@ -623,6 +658,9 @@ func (c *yahooClient) fetchBars(ctx context.Context, symbol string, from, to tim
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, newRateLimitError("Yahoo Finance", resp.Header.Get("Retry-After"), time.Now())
+	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("yahoo api error: status %d", resp.StatusCode)
 	}
@@ -669,6 +707,9 @@ func (c *yahooClient) fetchSymbolInfo(ctx context.Context, symbol string) (Symbo
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return SymbolInfo{}, newRateLimitError("Yahoo Finance", resp.Header.Get("Retry-After"), time.Now())
+	}
 	if resp.StatusCode >= 400 {
 		return SymbolInfo{}, fmt.Errorf("yahoo quote api error: status %d", resp.StatusCode)
 	}

@@ -14,6 +14,15 @@ const MOVING_AVERAGES = [
   { period: 150, color: "#a78bfa", title: "SMA 150" }
 ];
 
+const LIGHT_THEME_PLOT_COLORS = {
+  // Pine's bright yellow is clear on the dark chart but nearly disappears on white.
+  "#facc15": "#a16207"
+};
+
+export function indicatorPlotColor(color, theme) {
+  return theme === "light" ? LIGHT_THEME_PLOT_COLORS[color?.toLowerCase()] || color : color;
+}
+
 function compareMarkerTimes(left, right) {
   return String(left.time).localeCompare(String(right.time));
 }
@@ -235,7 +244,7 @@ export default function CandleChart({
       for (const plot of result.plots) {
         const definition = plot.type === "histogram" ? HistogramSeries : LineSeries;
         const series = chartRef.current.addSeries(definition, {
-          color: plot.color,
+          color: indicatorPlotColor(plot.color, theme),
           lineWidth: plot.lineWidth,
           priceScaleId: result.title,
           priceLineVisible: false,
@@ -269,7 +278,7 @@ export default function CandleChart({
     for (let paneIndex = 1; paneIndex < panes.length; paneIndex += 1) {
       panes[paneIndex].setStretchFactor(1);
     }
-  }, [indicatorResults]);
+  }, [indicatorResults, theme]);
 
   return (
     <div className="chart-shell">
@@ -282,7 +291,7 @@ export default function CandleChart({
         ))}
         {(indicatorResults || []).filter((result) => !result.error).flatMap((result) => result.plots || []).map((plot) => (
           <div className="chart-legend-item" key={plot.id}>
-            <span className="chart-legend-swatch" style={{ backgroundColor: plot.color }} />
+            <span className="chart-legend-swatch" style={{ backgroundColor: indicatorPlotColor(plot.color, theme) }} />
             <span>{plot.title}</span>
           </div>
         ))}

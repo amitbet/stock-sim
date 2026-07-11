@@ -89,13 +89,6 @@ plot(signalLine, title="Signal", color=color.orange, linewidth=2)
 hline(0, title="Zero", color=color.gray)
 `;
 
-export const DEFAULT_OBV_SCRIPT = `//@version=6
-indicator(title = "On-Balance Volume (OBV)", shorttitle = "OBV", format = format.volume, precision = 0)
-
-obv = ta.obv(close, volume)
-plot(obv, title="OBV", color=color.teal, linewidth=2)
-`;
-
 export const DEFAULT_OBV_SMA14_SCRIPT = `//@version=6
 indicator(title="On Balance Volume + SMA 14", shorttitle="OBV SMA14", format=format.volume, timeframe="", timeframe_gaps=true)
 
@@ -140,12 +133,6 @@ export const DEFAULT_INDICATOR_SCRIPTS = [
     name: "Moving Average Convergence Divergence (MACD)",
     visible: false,
     source: DEFAULT_MACD_SCRIPT
-  },
-  {
-    id: "on-balance-volume",
-    name: "On-Balance Volume (OBV)",
-    visible: false,
-    source: DEFAULT_OBV_SCRIPT
   },
   {
     id: "on-balance-volume-sma-14",

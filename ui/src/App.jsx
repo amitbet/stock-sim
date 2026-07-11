@@ -32,6 +32,7 @@ const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const THEME_STORAGE_KEY = "stock-sim-theme";
 const SCRIPTS_STORAGE_KEY = "stock-sim-indicator-scripts";
+const REMOVED_DEFAULT_SCRIPT_IDS = new Set(["on-balance-volume"]);
 
 /** Injected in vite.config.js from package.json (always available in dev/build). */
 const UI_PKG_VERSION = import.meta.env.VITE_UI_PKG_VERSION || "";
@@ -52,12 +53,14 @@ function readStoredScripts() {
   try {
     const parsed = JSON.parse(localStorage.getItem(SCRIPTS_STORAGE_KEY) || "null");
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_INDICATOR_SCRIPTS;
-    const stored = parsed.map((script, index) => upgradeStoredIndicatorScript({
-      id: script.id || `script-${index}`,
-      name: script.name || indicatorTitle(script.source || "", `Script ${index + 1}`),
-      visible: Boolean(script.visible),
-      source: script.source || ""
-    }));
+    const stored = parsed
+      .filter((script) => !REMOVED_DEFAULT_SCRIPT_IDS.has(script?.id))
+      .map((script, index) => upgradeStoredIndicatorScript({
+        id: script.id || `script-${index}`,
+        name: script.name || indicatorTitle(script.source || "", `Script ${index + 1}`),
+        visible: Boolean(script.visible),
+        source: script.source || ""
+      }));
     const storedIds = new Set(stored.map((script) => script.id));
     return [...stored, ...DEFAULT_INDICATOR_SCRIPTS.filter((script) => !storedIds.has(script.id))];
   } catch {

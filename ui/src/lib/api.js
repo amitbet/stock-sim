@@ -14,6 +14,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function retryAfterSeconds(value, now = Date.now()) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  if (/^\d+(?:\.\d+)?$/.test(text)) return Math.max(1, Math.ceil(Number(text)));
+  const retryAt = Date.parse(text);
+  if (!Number.isFinite(retryAt)) return null;
+  return Math.max(1, Math.ceil((retryAt - now) / 1000));
+}
+
+function rateLimitMessage(response) {
+  const seconds = retryAfterSeconds(response.headers.get("Retry-After"));
+  if (!seconds) return "Rate limit reached. Try again in a moment.";
+  if (seconds < 120) return `Rate limit reached. Try again in ${seconds} second${seconds === 1 ? "" : "s"}.`;
+  const minutes = Math.ceil(seconds / 60);
+  return `Rate limit reached. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+}
+
 function clearApiBaseCache() {
   apiBaseCache = undefined;
   apiBaseReady = undefined;
@@ -226,6 +243,7 @@ async function rawRequest(path, options = {}, requestOptions = {}) {
     : await response.text();
 
   if (!response.ok) {
+    if (response.status === 429) throw new Error(rateLimitMessage(response));
     throw new Error(payload?.error || payload || "Request failed");
   }
 
@@ -264,6 +282,7 @@ async function requestForm(path, formData, options = {}) {
     : await response.text();
 
   if (!response.ok) {
+    if (response.status === 429) throw new Error(rateLimitMessage(response));
     throw new Error(payload?.error || payload || "Request failed");
   }
   return payload;

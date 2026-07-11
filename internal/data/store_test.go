@@ -1,6 +1,19 @@
 package data
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestYahooRateLimitErrorParsesRetryAfter(t *testing.T) {
+	now := time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC)
+	if got := newRateLimitError("Yahoo Finance", "75", now).RetryAfterSeconds; got != 75 {
+		t.Fatalf("numeric Retry-After = %d, want 75", got)
+	}
+	if got := newRateLimitError("Yahoo Finance", "Sat, 11 Jul 2026 09:01:30 GMT", now).RetryAfterSeconds; got != 90 {
+		t.Fatalf("date Retry-After = %d, want 90", got)
+	}
+}
 
 func TestParseStooqHistoryRows(t *testing.T) {
 	body := `<table><tbody><tr><td align=center id=t03>2</td><td nowrap>2 Apr 2026</td><td>573.97</td><td>586.05</td><td>571.92</td><td>584.98</td><td id=c1>+0.11%</td><td id=c1>+0.670</td><td>50,941,709</td></tr><tr><td align=center id=t03>1</td><td nowrap>1 Apr 2026</td><td>581.48</td><td>587.739</td><td>580.42</td><td>584.31</td><td id=c1>+1.24%</td><td id=c1>+7.130</td><td>79,435,132</td></tr></tbody></table>`

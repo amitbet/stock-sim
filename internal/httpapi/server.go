@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -236,7 +237,7 @@ func (h *apiHandler) bars(w http.ResponseWriter, r *http.Request) {
 	}
 	bars, err := store.LoadBars(r.Context(), symbol, from, to)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeDataError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"bars": bars})
@@ -678,6 +679,18 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{"error": err.Error()})
+}
+
+func writeDataError(w http.ResponseWriter, err error) {
+	var rateLimit *data.RateLimitError
+	if errors.As(err, &rateLimit) {
+		if rateLimit.RetryAfterSeconds > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(rateLimit.RetryAfterSeconds))
+		}
+		writeError(w, http.StatusTooManyRequests, rateLimit)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err)
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter) {
