@@ -21,7 +21,8 @@ import {
   DEFAULT_INDICATOR_SCRIPTS,
   evaluateIndicatorScript,
   extractRequestedSymbols,
-  indicatorTitle
+  indicatorTitle,
+  upgradeStoredIndicatorScript
 } from "./lib/indicatorScripts.js";
 
 const AUTO_RUN_DEBOUNCE_MS = 350;
@@ -51,7 +52,7 @@ function readStoredScripts() {
   try {
     const parsed = JSON.parse(localStorage.getItem(SCRIPTS_STORAGE_KEY) || "null");
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_INDICATOR_SCRIPTS;
-    const stored = parsed.map((script, index) => ({
+    const stored = parsed.map((script, index) => upgradeStoredIndicatorScript({
       id: script.id || `script-${index}`,
       name: script.name || indicatorTitle(script.source || "", `Script ${index + 1}`),
       visible: Boolean(script.visible),
@@ -678,7 +679,6 @@ export default function App() {
     <div className="app-shell">
       <header className="hero">
         <div className="hero-copy">
-          <div className="eyebrow">Market replay workstation</div>
           <h1>Stock Simulator</h1>
         </div>
         <div className="hero-right">

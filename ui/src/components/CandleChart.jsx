@@ -220,14 +220,18 @@ export default function CandleChart({
     }
     indicatorSeriesRef.current = [];
 
+    while (chartRef.current.panes().length > 1) {
+      chartRef.current.removePane(chartRef.current.panes().length - 1);
+    }
+
     const active = (indicatorResults || []).filter((result) => !result.error && result.plots?.length > 0);
     if (active.length === 0) {
-      if (chartRef.current.panes().length > 1) chartRef.current.removePane(1);
       return;
     }
 
-    let firstSeries = null;
-    for (const result of active) {
+    active.forEach((result, resultIndex) => {
+      const paneIndex = resultIndex + 1;
+      let firstSeries = null;
       for (const plot of result.plots) {
         const definition = plot.type === "histogram" ? HistogramSeries : LineSeries;
         const series = chartRef.current.addSeries(definition, {
@@ -237,33 +241,33 @@ export default function CandleChart({
           priceLineVisible: false,
           lastValueVisible: true,
           crosshairMarkerVisible: plot.type !== "histogram"
-        }, 1);
+        }, paneIndex);
         series.setData(plot.data);
         indicatorSeriesRef.current.push({ series });
         if (!firstSeries) firstSeries = series;
       }
-    }
-    const panes = chartRef.current.panes();
-    if (panes[0]) panes[0].setStretchFactor(0.72);
-    if (panes[1]) panes[1].setStretchFactor(0.28);
 
-    if (firstSeries) {
+      if (!firstSeries) return;
       const created = new Set();
-      for (const result of active) {
-        for (const line of result.hlines || []) {
-          const key = `${line.price}-${line.title}`;
-          if (created.has(key)) continue;
-          created.add(key);
-          firstSeries.createPriceLine({
-            price: line.price,
-            color: line.color,
-            lineWidth: line.lineWidth,
-            lineStyle: 0,
-            axisLabelVisible: true,
-            title: line.title
-          });
-        }
+      for (const line of result.hlines || []) {
+        const key = `${line.price}-${line.title}`;
+        if (created.has(key)) continue;
+        created.add(key);
+        firstSeries.createPriceLine({
+          price: line.price,
+          color: line.color,
+          lineWidth: line.lineWidth,
+          lineStyle: 0,
+          axisLabelVisible: true,
+          title: line.title
+        });
       }
+    });
+
+    const panes = chartRef.current.panes();
+    if (panes[0]) panes[0].setStretchFactor(3);
+    for (let paneIndex = 1; paneIndex < panes.length; paneIndex += 1) {
+      panes[paneIndex].setStretchFactor(1);
     }
   }, [indicatorResults]);
 

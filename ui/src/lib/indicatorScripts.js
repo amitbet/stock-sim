@@ -18,7 +18,7 @@ hline(3, title="+3", color=color.white, linestyle=hline.style_solid, linewidth=1
 hline(-3, title="-3", color=color.white, linestyle=hline.style_solid, linewidth=1)
 `;
 
-export const DEFAULT_NYAD_SCRIPT = `//@version=6
+const LEGACY_DEFAULT_NYAD_SCRIPT = `//@version=6
 indicator(title = "NYSE Advance-Decline Line (NYAD)", shorttitle = "NYAD", format = format.price, precision = 0)
 
 nyad = request.security("USI:NYAD.NY", timeframe.period, close)
@@ -28,11 +28,49 @@ plot(nyadLine, title="NYAD", color=color.blue, linewidth=2)
 hline(0, title="Zero", color=color.gray)
 `;
 
-export const DEFAULT_RSI_SCRIPT = `//@version=6
+export const DEFAULT_NYAD_SCRIPT = `//@version=6
+indicator(title = "NYSE Advance-Decline Line (NYAD)", shorttitle = "NYAD", format = format.price, precision = 0)
+
+nyad = request.security("USI:NYAD.NY", timeframe.period, close)
+nyadLine = ta.cum(nyad)
+ema10 = ta.ema(nyadLine, 10)
+ema20 = ta.ema(nyadLine, 20)
+ema50 = ta.ema(nyadLine, 50)
+
+plot(nyadLine, title="NYAD", color=color.blue, linewidth=2)
+plot(ema10, title="EMA 10", color=color.orange, linewidth=2)
+plot(ema20, title="EMA 20", color=color.purple, linewidth=2)
+plot(ema50, title="EMA 50", color=color.green, linewidth=2)
+hline(0, title="Zero", color=color.gray)
+`;
+
+const LEGACY_DEFAULT_RSI_SCRIPT = `//@version=6
 indicator(title = "Relative Strength Index (RSI)", shorttitle = "RSI", format = format.price, precision = 2)
 
 rsi = ta.rsi(close, 14)
 plot(rsi, title="RSI 14", color=color.purple, linewidth=2)
+hline(70, title="Overbought", color=color.red)
+hline(50, title="Midline", color=color.gray)
+hline(30, title="Oversold", color=color.green)
+`;
+
+export function upgradeStoredIndicatorScript(script) {
+  if (script.id === "nyse-advance-decline-line" && script.source?.trim() === LEGACY_DEFAULT_NYAD_SCRIPT.trim()) {
+    return { ...script, source: DEFAULT_NYAD_SCRIPT };
+  }
+  if (script.id === "relative-strength-index" && script.source?.trim() === LEGACY_DEFAULT_RSI_SCRIPT.trim()) {
+    return { ...script, source: DEFAULT_RSI_SCRIPT };
+  }
+  return script;
+}
+
+export const DEFAULT_RSI_SCRIPT = `//@version=6
+indicator(title = "Relative Strength Index (RSI)", shorttitle = "RSI", format = format.price, precision = 2)
+
+rsi = ta.rsi(close, 14)
+ma14 = ta.sma(rsi, 14)
+plot(rsi, title="RSI 14", color=color.purple, linewidth=2)
+plot(ma14, title="MA 14", color=color.yellow, linewidth=2)
 hline(70, title="Overbought", color=color.red)
 hline(50, title="Midline", color=color.gray)
 hline(30, title="Oversold", color=color.green)
